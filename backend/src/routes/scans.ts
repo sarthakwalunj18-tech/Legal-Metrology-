@@ -4,10 +4,49 @@ import { StorageService } from "../services/storage.service.js";
 import { PreprocessService } from "../services/preprocess.service.js";
 import { DBRepo } from "../db/repo.js";
 import { OcrService } from "../services/ocr/ocr.service.js";
+import { GeminiExtractor } from "../services/extraction/gemini.extractor.js";
 
 export const scanRoutes: FastifyPluginAsync = async (
   fastify: FastifyInstance,
 ) => {
+  // Live Frame Extraction (No deep DB insert)
+  fastify.post(
+    "/scans/live-extract",
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const parts = request.parts({ limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+      let imageBuffer: Buffer | null = null;
+      let mimetype = "";
+
+      for await (const part of parts) {
+        if (part.type === "file") {
+          imageBuffer = await part.toBuffer();
+          mimetype = part.mimetype;
+          break; // Only need 1
+        }
+      }
+
+      if (!imageBuffer) {
+        return reply.status(400).send({ success: false, error: "No image file provided" });
+      }
+
+      // Fast preprocess
+      const preprocessResult = await PreprocessService.preprocess(imageBuffer);
+
+      // OCR & Extract
+      const ocrResult = await OcrService.extract(preprocessResult.processedBuffer);
+      const extraction = await GeminiExtractor.extractDeclarations({
+        ocrText: ocrResult.rawText,
+        images: [{ buffer: preprocessResult.processedBuffer, mimeType: "image/jpeg" }]
+      });
+
+      return reply.status(200).send({
+        success: true,
+        data: extraction
+      });
+    }
+  );
+
   // 1. Upload Product Package Image & Initialize Inspection
   fastify.post(
     "/scans/upload",

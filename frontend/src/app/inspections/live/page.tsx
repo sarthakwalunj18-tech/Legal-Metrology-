@@ -16,6 +16,7 @@ import {
   ScanLine
 } from "lucide-react";
 import { useLiveScan, LiveScanStatus } from "@/components/liveScan/useLiveScan";
+import { calculateCoverage } from "@/components/liveScan/InformationMerger";
 
 export default function LiveInspectionPage() {
   const {
@@ -24,11 +25,16 @@ export default function LiveInspectionPage() {
     status,
     startCamera,
     stopCamera,
+    finishSessionScan,
     viewsCaptured,
     totalProcessed,
     error,
-    uploadQueueCount
+    uploadQueueCount,
+    productInfo,
+    isFinishing
   } = useLiveScan();
+
+  const coverage = calculateCoverage(productInfo);
 
   const getStatusDisplay = (status: LiveScanStatus) => {
     switch(status) {
@@ -60,12 +66,14 @@ export default function LiveInspectionPage() {
     }
   };
 
-  const finishScan = useCallback(() => {
-    stopCamera();
-    // In a real app we'd wait for uploads to finish and redirect
-    // Since we're demonstrating the capture layer, we'll just stop
-    window.location.href = '/inspections';
-  }, [stopCamera]);
+  const handleFinishScan = useCallback(async () => {
+    const finalScanId = await finishSessionScan();
+    if (finalScanId) {
+      window.location.href = `/inspections/${finalScanId}`;
+    } else {
+      window.location.href = '/inspections';
+    }
+  }, [finishSessionScan]);
 
   return (
     <div className="flex bg-slate-50 min-h-screen text-slate-800">
@@ -97,10 +105,12 @@ export default function LiveInspectionPage() {
                     </button>
                 ) : (
                     <button
-                      onClick={finishScan}
-                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium flex items-center gap-2 transition-all"
+                      onClick={handleFinishScan}
+                      disabled={isFinishing}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 focus:outline-none text-white rounded-lg font-medium flex items-center gap-2 transition-all disabled:opacity-50"
                     >
-                      <CameraOff className="w-5 h-5" /> Finish Scan
+                      {isFinishing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <CameraOff className="w-5 h-5" />}
+                      {isFinishing ? "Processing & Validating..." : "Finish Scan"}
                     </button>
                 )}
               </div>
@@ -192,21 +202,43 @@ export default function LiveInspectionPage() {
                        <div className="flex justify-between items-center mb-2">
                          <span className="text-slate-600 text-sm font-medium flex items-center gap-1.5">
                            <RefreshCw className={`w-3.5 h-3.5 ${uploadQueueCount > 0 ? "animate-spin text-indigo-500" : "text-slate-400"}`} />
-                           Backend Processing
+                           Information Coverage
                          </span>
+                         <span className="font-bold text-sm text-indigo-700">{coverage.percent}%</span>
                        </div>
-                       <div className="flex items-center gap-4 text-sm mt-3">
-                          <div className="flex-1 bg-slate-50 p-2 rounded-lg border border-slate-100 text-center">
-                            <div className="text-slate-400 text-xs font-medium">Queued</div>
-                            <div className="font-semibold text-slate-700 text-lg mt-0.5">{uploadQueueCount}</div>
-                          </div>
-                          <div className="flex-1 bg-slate-50 p-2 rounded-lg border border-slate-100 text-center">
-                            <div className="text-slate-400 text-xs font-medium">Processed</div>
-                            <div className="font-semibold text-emerald-600 text-lg mt-0.5">{totalProcessed}</div>
-                          </div>
+
+                       <div className="w-full bg-slate-100 rounded-full h-2.5 mb-4">
+                         <div className="bg-indigo-500 h-2.5 rounded-full transition-all" style={{ width: `${coverage.percent}%` }}></div>
                        </div>
-                       <p className="text-xs text-slate-500 mt-3 border-l-2 border-indigo-200 pl-2">
-                         Valid frames are uploaded to the OCR validation queue in the background. The camera never freezes.
+
+                       <div className="space-y-4">
+                          {coverage.found.length > 0 && (
+                            <div>
+                               <div className="text-xs font-semibold text-emerald-600 mb-1">✓ Detected</div>
+                               <div className="flex flex-wrap gap-1">
+                                 {coverage.found.map(f => (
+                                   <span key={f} className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs">{f}</span>
+                                 ))}
+                               </div>
+                            </div>
+                          )}
+
+                          {coverage.missing.length > 0 && (
+                            <div>
+                               <div className="text-xs font-semibold text-slate-500 mb-1">• Still looking for</div>
+                               <div className="flex flex-wrap gap-1">
+                                 {coverage.missing.map(f => (
+                                   <span key={f} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs">{f}</span>
+                                 ))}
+                               </div>
+                            </div>
+                          )}
+                       </div>
+
+                       <p className="text-xs text-slate-500 mt-4 border-l-2 border-indigo-200 pl-2">
+                         {coverage.percent === 100
+                           ? "Excellent coverage. You can finish the scan."
+                           : "Continue rotating the product to capture remaining declarations."}
                        </p>
                      </div>
 

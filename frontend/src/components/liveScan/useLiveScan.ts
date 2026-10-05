@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { evaluateFrame, FrameQualityResult } from "./FrameQualityAnalyzer";
 import { DuplicateDetector, signatureFromFrame } from "./DuplicateDetector";
+import { ProductInformationState, createEmptyState, mergeExtraction } from "./InformationMerger";
 import { API_BASE_URL } from "@/lib/api";
 
 export type LiveScanStatus =
@@ -29,7 +30,10 @@ export function useLiveScan() {
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const captureCooldownRef = useRef(0);
 
-  const queueRef = useRef<File[]>([]);
+  // V2: Differentiate queues
+  const extractQueueRef = useRef<File[]>([]);
+  const allSessionFilesRef = useRef<File[]>([]);
+
   const isUploadingRef = useRef(false);
   const isStartingRef = useRef(false);
   const mountedRef = useRef(true);
@@ -41,6 +45,9 @@ export function useLiveScan() {
   const [totalProcessed, setTotalProcessed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [uploadQueueCount, setUploadQueueCount] = useState(0);
+
+  const [productInfo, setProductInfo] = useState<ProductInformationState>(createEmptyState());
+  const [isFinishing, setIsFinishing] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (loopRef.current !== null) {
@@ -58,50 +65,46 @@ export function useLiveScan() {
   }, []);
 
   const queueBackgroundWorker = useCallback(async () => {
-    if (isUploadingRef.current || queueRef.current.length === 0) return;
+    if (isUploadingRef.current || extractQueueRef.current.length === 0) return;
 
     isUploadingRef.current = true;
-    const batch = queueRef.current.splice(0, 10);
-    setUploadQueueCount(queueRef.current.length);
+    // V2: Process ONE frame rapidly for real-time coverage, instead of creating 10-batch scans
+    const file = extractQueueRef.current.shift();
+    if (!file) {
+      isUploadingRef.current = false;
+      return;
+    }
+
+    setUploadQueueCount(extractQueueRef.current.length);
 
     try {
       const token = localStorage.getItem("lm_auth_token") || "dev-inspector";
       const formData = new FormData();
-
-      batch.forEach((file) => {
-        formData.append("files", file);
-      });
-
-      formData.append("productName", "Live Rolling Product");
-      formData.append("scanMode", "LIVE_ROLLING");
+      formData.append("files", file); // Must match part name if single, but in Fastify we handle request.parts()
 
       abortControllerRef.current = new AbortController();
 
-      const uploadRes = await fetch(`${API_BASE_URL}/api/scans/upload`, {
+      const extractRes = await fetch(`${API_BASE_URL}/api/scans/live-extract`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
         signal: abortControllerRef.current.signal
       });
 
-      if (!uploadRes.ok) throw new Error("Batch upload failed");
-      const { data } = await uploadRes.json();
-
-      await fetch(`${API_BASE_URL}/api/inspections/${data.scanId}/analyze`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        signal: abortControllerRef.current.signal
-      });
-
-      setTotalProcessed(prev => prev + batch.length);
+      if (extractRes.ok) {
+        const { data } = await extractRes.json();
+        // Merge seamlessly into UI
+        setProductInfo(prev => mergeExtraction(prev, data));
+        setTotalProcessed(prev => prev + 1);
+      }
     } catch (e: any) {
       if (e.name !== "AbortError") {
-        console.error("Background Upload Error: ", e);
+        console.warn("Background extraction failed, trying next", e);
       }
     } finally {
       isUploadingRef.current = false;
-      if (queueRef.current.length > 0) {
-        setTimeout(queueBackgroundWorker, 1000);
+      if (extractQueueRef.current.length > 0) {
+        setTimeout(queueBackgroundWorker, 100);
       }
     }
   }, []);
@@ -126,12 +129,63 @@ export function useLiveScan() {
       if (!blob) return;
 
       const file = new File([blob], `live-view-${Date.now()}.jpg`, { type: "image/jpeg" });
-      queueRef.current.push(file);
-      setUploadQueueCount(queueRef.current.length);
+
+      // V2: Push to BOTH real-time extract queue and long-term session array
+      extractQueueRef.current.push(file);
+      allSessionFilesRef.current.push(file);
+
+      setUploadQueueCount(extractQueueRef.current.length);
 
       void queueBackgroundWorker();
     }, "image/jpeg", 0.9);
   }, [queueBackgroundWorker]);
+
+  const finishSessionScan = useCallback(async () => {
+    if (isFinishing || allSessionFilesRef.current.length === 0) {
+      stopCamera();
+      return null;
+    }
+
+    setIsFinishing(true);
+    setStatus("PROCESSING");
+    stopCamera();
+
+    try {
+      const token = localStorage.getItem("lm_auth_token") || "dev-inspector";
+      const formData = new FormData();
+
+      allSessionFilesRef.current.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      formData.append("productName", "Live Session Product");
+      formData.append("scanMode", "LIVE_ROLLING_V2");
+
+      // 1. Single upload with all accepted files
+      const uploadRes = await fetch(`${API_BASE_URL}/api/scans/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+
+      if (!uploadRes.ok) throw new Error("Session batch upload failed");
+      const { data } = await uploadRes.json();
+
+      // 2. Single analysis call (which runs the final aggregate compliance rule engine)
+      await fetch(`${API_BASE_URL}/api/inspections/${data.scanId}/analyze`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      return data.scanId;
+    } catch (e: any) {
+      console.error("Finish scan failed:", e);
+      setError(e.message || "Failed to finalize scan session");
+      return null;
+    } finally {
+      setIsFinishing(false);
+    }
+  }, [isFinishing, stopCamera]);
 
   const startAnalysisLoop = useCallback(() => {
     if (loopRef.current !== null) return;
@@ -243,7 +297,8 @@ export function useLiveScan() {
       setViewsCaptured(0);
       setTotalProcessed(0);
       setUploadQueueCount(0);
-      queueRef.current = [];
+      extractQueueRef.current = [];
+      allSessionFilesRef.current = [];
       detectorRef.current.clearSession();
       previousFrameRef.current = null;
 
@@ -271,9 +326,12 @@ export function useLiveScan() {
     status,
     startCamera,
     stopCamera,
+    finishSessionScan,
     viewsCaptured,
     totalProcessed,
     error,
-    uploadQueueCount
+    uploadQueueCount,
+    productInfo,
+    isFinishing
   };
 }
