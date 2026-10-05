@@ -7,6 +7,9 @@ import { API_BASE_URL } from "@/lib/api";
 export type LiveScanStatus =
   | "READY"
   | "SEARCHING_PRODUCT"
+  | "PRODUCT_DETECTED"
+  | "HOLD_STEADY"
+  | "GOOD_POSITION"
   | "TOO_DARK"
   | "TOO_BRIGHT"
   | "TOO_BLURRY"
@@ -14,7 +17,7 @@ export type LiveScanStatus =
   | "PARTIALLY_OUTSIDE"
   | "TOO_SMALL"
   | "DUPLICATE"
-  | "GOOD_POSITION"
+  | "CAPTURING"
   | "CAPTURED"
   | "PROCESSING"
   | "ERROR";
@@ -29,8 +32,9 @@ export function useLiveScan() {
   const loopRef = useRef<number | null>(null);
   const previousFrameRef = useRef<Uint8ClampedArray | null>(null);
   const captureCooldownRef = useRef(0);
+  const stableTicksRef = useRef(0);
 
-  // V2: Differentiate queues
+  // Dual queue architecture
   const extractQueueRef = useRef<File[]>([]);
   const allSessionFilesRef = useRef<File[]>([]);
 
@@ -58,17 +62,22 @@ export function useLiveScan() {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    if (abortControllerRef.current) abortControllerRef.current.abort();
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setCameraOn(false);
     setStatus("READY");
+    stableTicksRef.current = 0;
+    captureCooldownRef.current = 0;
   }, []);
 
   const queueBackgroundWorker = useCallback(async () => {
     if (isUploadingRef.current || extractQueueRef.current.length === 0) return;
 
     isUploadingRef.current = true;
-    // V2: Process ONE frame rapidly for real-time coverage, instead of creating 10-batch scans
     const file = extractQueueRef.current.shift();
     if (!file) {
       isUploadingRef.current = false;
@@ -80,7 +89,7 @@ export function useLiveScan() {
     try {
       const token = localStorage.getItem("lm_auth_token") || "dev-inspector";
       const formData = new FormData();
-      formData.append("files", file); // Must match part name if single, but in Fastify we handle request.parts()
+      formData.append("files", file);
 
       abortControllerRef.current = new AbortController();
 
@@ -93,18 +102,17 @@ export function useLiveScan() {
 
       if (extractRes.ok) {
         const { data } = await extractRes.json();
-        // Merge seamlessly into UI
-        setProductInfo(prev => mergeExtraction(prev, data));
-        setTotalProcessed(prev => prev + 1);
+        setProductInfo((prev) => mergeExtraction(prev, data));
+        setTotalProcessed((prev) => prev + 1);
       }
     } catch (e: any) {
       if (e.name !== "AbortError") {
-        console.warn("Background extraction failed, trying next", e);
+        console.warn("Background live extraction failed:", e);
       }
     } finally {
       isUploadingRef.current = false;
       if (extractQueueRef.current.length > 0) {
-        setTimeout(queueBackgroundWorker, 100);
+        setTimeout(queueBackgroundWorker, 80);
       }
     }
   }, []);
@@ -125,19 +133,23 @@ export function useLiveScan() {
 
     ctx.drawImage(video, 0, 0, width, height);
 
-    captureCanvas.toBlob((blob) => {
-      if (!blob) return;
+    captureCanvas.toBlob(
+      (blob) => {
+        if (!blob) return;
 
-      const file = new File([blob], `live-view-${Date.now()}.jpg`, { type: "image/jpeg" });
+        const file = new File([blob], `live-view-${Date.now()}.jpg`, {
+          type: "image/jpeg"
+        });
 
-      // V2: Push to BOTH real-time extract queue and long-term session array
-      extractQueueRef.current.push(file);
-      allSessionFilesRef.current.push(file);
+        extractQueueRef.current.push(file);
+        allSessionFilesRef.current.push(file);
 
-      setUploadQueueCount(extractQueueRef.current.length);
-
-      void queueBackgroundWorker();
-    }, "image/jpeg", 0.9);
+        setUploadQueueCount(extractQueueRef.current.length);
+        void queueBackgroundWorker();
+      },
+      "image/jpeg",
+      0.92
+    );
   }, [queueBackgroundWorker]);
 
   const finishSessionScan = useCallback(async () => {
@@ -158,20 +170,18 @@ export function useLiveScan() {
         formData.append("files", file);
       });
 
-      formData.append("productName", "Live Session Product");
+      formData.append("productName", "Live Inspection Session");
       formData.append("scanMode", "LIVE_ROLLING_V2");
 
-      // 1. Single upload with all accepted files
       const uploadRes = await fetch(`${API_BASE_URL}/api/scans/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData
       });
 
-      if (!uploadRes.ok) throw new Error("Session batch upload failed");
+      if (!uploadRes.ok) throw new Error("Consolidated session upload failed");
       const { data } = await uploadRes.json();
 
-      // 2. Single analysis call (which runs the final aggregate compliance rule engine)
       await fetch(`${API_BASE_URL}/api/inspections/${data.scanId}/analyze`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
@@ -180,7 +190,7 @@ export function useLiveScan() {
       return data.scanId;
     } catch (e: any) {
       console.error("Finish scan failed:", e);
-      setError(e.message || "Failed to finalize scan session");
+      setError(e.message || "Failed to finalize session scan");
       return null;
     } finally {
       setIsFinishing(false);
@@ -191,12 +201,15 @@ export function useLiveScan() {
     if (loopRef.current !== null) return;
 
     captureCooldownRef.current = 0;
+    stableTicksRef.current = 0;
 
+    // Run evaluation tick every 180ms
     loopRef.current = window.setInterval(() => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
+      // Handle capture cooldown (allow user time to rotate product)
       if (captureCooldownRef.current > 0) {
         captureCooldownRef.current--;
         return;
@@ -207,44 +220,68 @@ export function useLiveScan() {
         const targetH = 72;
         canvas.width = targetW;
         canvas.height = targetH;
-        let ctx = canvas.getContext("2d", { willReadFrequently: true });
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
         if (!ctx) return;
 
         ctx.drawImage(video, 0, 0, targetW, targetH);
-        const data = ctx.getImageData(0, 0, targetW, targetH).data;
-        const currentFrame = new Uint8ClampedArray(data);
+        const imgData = ctx.getImageData(0, 0, targetW, targetH).data;
+        const currentFrame = new Uint8ClampedArray(imgData);
 
-        const evaluation = evaluateFrame(currentFrame, previousFrameRef.current, targetW, targetH, true);
+        const evaluation = evaluateFrame(
+          currentFrame,
+          previousFrameRef.current,
+          targetW,
+          targetH,
+          true
+        );
 
         previousFrameRef.current = currentFrame;
 
+        // If frame is unacceptable (empty, moving, blurry, dark, etc.)
         if (!evaluation.isAcceptable) {
-           setStatus(evaluation.status === "NO_PRODUCT" ? "SEARCHING_PRODUCT" : evaluation.status);
-           return;
+          stableTicksRef.current = 0;
+          setStatus(
+            evaluation.status === "NO_PRODUCT"
+              ? "SEARCHING_PRODUCT"
+              : evaluation.status
+          );
+          return;
         }
 
+        // Frame passed individual gates & composite score.
+        // Require 2 consecutive stable ticks (~360ms temporal stability window)
+        // to prevent capturing motion blur mid-swivel.
+        if (stableTicksRef.current < 1) {
+          stableTicksRef.current++;
+          setStatus("HOLD_STEADY");
+          return;
+        }
+
+        // Check if this angle has already been captured
         const signature = signatureFromFrame(currentFrame, targetW, targetH);
         const isDuplicate = detectorRef.current.checkDuplicate(signature);
 
         if (isDuplicate) {
           setStatus("DUPLICATE");
+          stableTicksRef.current = 0;
           return;
         }
 
+        // Fresh unique view confirmed! Capture and queue
         detectorRef.current.addSignature(signature);
-        setViewsCaptured(detectorRef.current.getCount());
+        const currentCount = detectorRef.current.getCount();
+        setViewsCaptured(currentCount);
         setStatus("CAPTURED");
 
         extractAndQueueFrame();
 
-        // Wait ~ 10 ticks (roughly 2 seconds given 200ms interval) before capturing again
-        captureCooldownRef.current = 10;
-
+        stableTicksRef.current = 0;
+        // Cooldown: 4 ticks @ 180ms ≈ 720ms
+        captureCooldownRef.current = 4;
       } catch (err) {
-        console.error(err);
+        console.error("Frame evaluation error:", err);
       }
-
-    }, 200);
+    }, 180);
   }, [extractAndQueueFrame]);
 
   const startCamera = async () => {
@@ -267,8 +304,13 @@ export function useLiveScan() {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15, max: 30 } },
-          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 15, max: 30 }
+          },
+          audio: false
         });
       } catch (initialErr) {
         console.warn("Ideal camera constraints failed, attempting fallback...", initialErr);
@@ -279,16 +321,16 @@ export function useLiveScan() {
       }
 
       if (!mountedRef.current) {
-         stream.getTracks().forEach(t => t.stop());
-         return;
+        stream.getTracks().forEach((t) => t.stop());
+        return;
       }
 
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(e => {
-            console.error("Video play interrupted:", e);
+        await videoRef.current.play().catch((e) => {
+          console.error("Video play interrupted:", e);
         });
       }
 
@@ -301,6 +343,8 @@ export function useLiveScan() {
       allSessionFilesRef.current = [];
       detectorRef.current.clearSession();
       previousFrameRef.current = null;
+      stableTicksRef.current = 0;
+      captureCooldownRef.current = 0;
 
       startAnalysisLoop();
     } catch (e: any) {
@@ -315,8 +359,8 @@ export function useLiveScan() {
   useEffect(() => {
     mountedRef.current = true;
     return () => {
-       mountedRef.current = false;
-       stopCamera();
+      mountedRef.current = false;
+      stopCamera();
     };
   }, [stopCamera]);
 

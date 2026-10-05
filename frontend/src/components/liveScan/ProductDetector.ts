@@ -1,73 +1,100 @@
+export interface ProductDetectionResult {
+  detected: boolean;
+  position: "GOOD_POSITION" | "NO_PRODUCT" | "PARTIALLY_OUTSIDE" | "TOO_SMALL";
+  presenceScore: number;
+  framingScore: number;
+  detailCount: number;
+}
+
 export function detectProductAndPosition(
   data: Uint8ClampedArray,
   width: number,
-  height: number,
-  threshold = 30
-): { detected: boolean; position: string; confidence: number; boundingBox?: any } {
-  // We divide the image into a 3x3 grid
-  // We want the central area to have high contrast/details (product)
-  // We want the extreme edges to have low variance (background)
-  // This is a fast, lightweight heuristic since full YOLO is too heavy.
-
-  if (!data?.length || width < 3 || height < 3) {
-    return { detected: false, position: "NO_FRAME", confidence: 0 };
+  height: number
+): ProductDetectionResult {
+  if (!data?.length || width < 4 || height < 4) {
+    return { detected: false, position: "NO_PRODUCT", presenceScore: 0, framingScore: 0, detailCount: 0 };
   }
 
-  const cellW = Math.floor(width / 3);
-  const cellH = Math.floor(height / 3);
+  // Margin definitions (20% on each edge)
+  const leftMargin = width * 0.2;
+  const rightMargin = width * 0.8;
+  const topMargin = height * 0.2;
+  const bottomMargin = height * 0.8;
 
-  let centerVariance = 0;
-  let edgeVariance = 0;
-  let centerCount = 0;
-  let edgeCount = 0;
+  let centerDetail = 0;
+  let edgeDetail = 0;
+  let centerSamples = 0;
+  let edgeSamples = 0;
 
-  // Compute simple variance approximation per region
-  for (let y = 0; y < height; y += 4) {
-    for (let x = 0; x < width; x += 4) {
+  // Step 2x2 through the frame for high speed and thorough spatial coverage
+  for (let y = 1; y < height - 1; y += 2) {
+    for (let x = 1; x < width - 1; x += 2) {
       const idx = (y * width + x) * 4;
-      const gray = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
-      
-      const isCenter = x > cellW && x < width - cellW && y > cellH && y < height - cellH;
-      
-      // Look at neighbor for crude gradient
-      if (x < width - 4) {
-        const nextIdx = (y * width + x + 4) * 4;
-        const nextGray = data[nextIdx] * 0.299 + data[nextIdx + 1] * 0.587 + data[nextIdx + 2] * 0.114;
-        const diff = Math.abs(gray - nextGray);
-        
+      const rightIdx = idx + 4;
+      const downIdx = idx + width * 4;
+
+      const g = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
+      const gr = data[rightIdx] * 0.299 + data[rightIdx + 1] * 0.587 + data[rightIdx + 2] * 0.114;
+      const gd = data[downIdx] * 0.299 + data[downIdx + 1] * 0.587 + data[downIdx + 2] * 0.114;
+
+      // Combined 2D gradient magnitude
+      const grad = Math.abs(g - gr) + Math.abs(g - gd);
+
+      const isCenter = x >= leftMargin && x <= rightMargin && y >= topMargin && y <= bottomMargin;
+
+      if (grad > 6) { // detail threshold
         if (isCenter) {
-          centerVariance += diff;
-          centerCount++;
+          centerDetail++;
         } else {
-          // Edges are the top/bottom 10% and left/right 10%
-          if (x < cellW * 0.5 || x > width - cellW * 0.5 || y < cellH * 0.5 || y > height - cellH * 0.5) {
-            edgeVariance += diff;
-            edgeCount++;
-          }
+          edgeDetail++;
         }
+      }
+
+      if (isCenter) {
+        centerSamples++;
+      } else {
+        edgeSamples++;
       }
     }
   }
 
-  const avgCenter = centerCount > 0 ? centerVariance / centerCount : 0;
-  const avgEdge = edgeCount > 0 ? edgeVariance / edgeCount : 0;
+  const totalDetails = centerDetail + edgeDetail;
+  const totalSamples = centerSamples + edgeSamples;
+  const detailRatio = totalSamples > 0 ? totalDetails / totalSamples : 0;
+  const centerDetailRatio = centerSamples > 0 ? centerDetail / centerSamples : 0;
 
-  // Product Detection Logic
-  // A clear product will have high variance in the center and low variance on the edges.
-  const confidence = Math.min(1, avgCenter / (threshold * 2));
-  
-  if (avgCenter < threshold) {
-    return { detected: false, position: "NO_PRODUCT", confidence };
+  // Presence score:
+  // Packaged commodities with text/graphics easily exhibit >= 3% gradient pixels.
+  // 1.5% gives a baseline score of 50. >= 4% gives 100.
+  let presenceScore = Math.min(100, Math.round((detailRatio / 0.04) * 100));
+
+  // Determine framing & position
+  let position: "GOOD_POSITION" | "NO_PRODUCT" | "PARTIALLY_OUTSIDE" | "TOO_SMALL" = "GOOD_POSITION";
+  let framingScore = 80;
+
+  if (presenceScore < 15 && totalDetails < 8) {
+    // Blank wall, lens covered, or empty background
+    position = "NO_PRODUCT";
+    framingScore = 0;
+  } else if (centerDetailRatio < 0.01 && edgeDetail > centerDetail * 4) {
+    // Product is clipping the extreme border and completely empty in the center
+    position = "PARTIALLY_OUTSIDE";
+    framingScore = 40;
+  } else if (centerDetail < 4 && totalDetails < 12) {
+    // Tiny speck in the distance
+    position = "TOO_SMALL";
+    framingScore = 45;
+  } else {
+    // Good central coverage - suitable for OCR
+    position = "GOOD_POSITION";
+    framingScore = Math.min(100, 60 + Math.round((centerDetailRatio / 0.05) * 40));
   }
 
-  if (avgEdge > threshold * 0.8) {
-    return { detected: true, position: "PARTIALLY_OUTSIDE", confidence };
-  }
-
-  if (avgCenter > threshold * 3 && avgEdge < threshold * 0.3) {
-      // Very tiny product in the absolute center
-      return { detected: true, position: "TOO_SMALL", confidence };
-  }
-
-  return { detected: true, position: "GOOD_POSITION", confidence };
+  return {
+    detected: presenceScore >= 18,
+    position,
+    presenceScore,
+    framingScore,
+    detailCount: totalDetails
+  };
 }

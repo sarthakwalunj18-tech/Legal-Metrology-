@@ -7,9 +7,9 @@ export function signatureFromFrame(data: Uint8ClampedArray, width: number, heigh
   const columns = 24;
   const rows = 32;
   const signature: number[] = [];
-  
+
   if (!data?.length) return signature;
-  
+
   for (let y = 0; y < rows; y += 1) {
     const sy = Math.min(height - 1, Math.floor((y / rows) * height));
     for (let x = 0; x < columns; x += 1) {
@@ -25,8 +25,10 @@ export function signatureFromFrame(data: Uint8ClampedArray, width: number, heigh
 export function visualSimilarity(a: number[], b: number[]): number {
   if (!a.length || a.length !== b.length) return 0;
   let total = 0;
-  for (let i = 0; i < a.length; i += 1) total += Math.abs(a[i] - b[i]);
-  // Normalize difference. Max difference per pixel is 255.
+  for (let i = 0; i < a.length; i += 1) {
+    total += Math.abs(a[i] - b[i]);
+  }
+  // Normalize difference. Max possible difference per pixel is 255.
   return 1 - total / (a.length * 255);
 }
 
@@ -34,7 +36,7 @@ export class DuplicateDetector {
   private history: HashProfile[] = [];
   private similarityThreshold: number;
 
-  constructor(similarityThreshold = 0.82) {
+  constructor(similarityThreshold = 0.85) {
     this.similarityThreshold = similarityThreshold;
   }
 
@@ -42,7 +44,7 @@ export class DuplicateDetector {
     for (const profile of this.history) {
       const similarity = visualSimilarity(signature, profile.signature);
       if (similarity >= this.similarityThreshold) {
-        return true; 
+        return true;
       }
     }
     return false;
@@ -53,8 +55,8 @@ export class DuplicateDetector {
       signature,
       timestamp: Date.now()
     });
-    
-    // Keep bounded
+
+    // Keep bounded to last 50 captures
     if (this.history.length > 50) {
       this.history.shift();
     }
@@ -63,8 +65,8 @@ export class DuplicateDetector {
   public clearSession() {
     this.history = [];
   }
-  
-  public getCount() {
+
+  public getCount(): number {
     return this.history.length;
   }
 }

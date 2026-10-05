@@ -37,32 +37,60 @@ export default function LiveInspectionPage() {
   const coverage = calculateCoverage(productInfo);
 
   const getStatusDisplay = (status: LiveScanStatus) => {
-    switch(status) {
-      case "READY": return "Ready to start scan";
-      case "SEARCHING_PRODUCT": return "Searching for product in frame...";
-      case "TOO_DARK": return "Too dark - increase lighting";
-      case "TOO_BRIGHT": return "Too bright - reduce glare";
-      case "TOO_BLURRY": return "Hold steady - image is blurry";
-      case "MOVING": return "Hold steady - product is moving";
-      case "PARTIALLY_OUTSIDE": return "Move product further away - cut off edges";
-      case "TOO_SMALL": return "Move product closer - too small";
-      case "DUPLICATE": return "Similar view - skipped (rotate product)";
-      case "GOOD_POSITION": return "Processing frame...";
-      case "CAPTURED": return "New view captured!";
-      case "PROCESSING": return "Processing captures...";
-      case "ERROR": return "Error occurred";
-      default: return status;
+    switch (status) {
+      case "READY":
+        return "Ready to start scan";
+      case "SEARCHING_PRODUCT":
+        return "Searching for product in frame...";
+      case "PRODUCT_DETECTED":
+      case "HOLD_STEADY":
+        return "Product detected — hold steady";
+      case "CAPTURING":
+        return "Capturing view...";
+      case "CAPTURED":
+        return viewsCaptured > 0
+          ? `View ${viewsCaptured} captured! Rotate product`
+          : "View captured! Rotate product";
+      case "DUPLICATE":
+        return "Similar view — rotate product";
+      case "TOO_DARK":
+        return "Too dark — increase lighting";
+      case "TOO_BRIGHT":
+        return "Too bright — reduce glare";
+      case "TOO_BLURRY":
+        return "Image blurry — hold steady";
+      case "MOVING":
+        return "Product moving — hold steady";
+      case "PARTIALLY_OUTSIDE":
+        return "Move product slightly away";
+      case "TOO_SMALL":
+        return "Bring product closer";
+      case "PROCESSING":
+        return "Processing & validating...";
+      case "ERROR":
+        return "Error occurred";
+      default:
+        return status;
     }
   };
 
   const getStatusColor = (status: LiveScanStatus) => {
-    switch(status) {
-      case "CAPTURED": return "bg-green-500";
-      case "GOOD_POSITION": return "bg-blue-500";
-      case "DUPLICATE": return "bg-amber-500";
-      case "SEARCHING_PRODUCT": return "bg-slate-400";
-      case "READY": return "bg-slate-400";
-      default: return "bg-red-500";
+    switch (status) {
+      case "CAPTURED":
+        return "bg-emerald-600";
+      case "CAPTURING":
+        return "bg-emerald-500";
+      case "PRODUCT_DETECTED":
+      case "HOLD_STEADY":
+        return "bg-blue-600";
+      case "DUPLICATE":
+        return "bg-amber-600";
+      case "SEARCHING_PRODUCT":
+        return "bg-slate-700/80 backdrop-blur-sm";
+      case "READY":
+        return "bg-slate-600";
+      default:
+        return "bg-red-500";
     }
   };
 
@@ -150,9 +178,17 @@ export default function LiveInspectionPage() {
                   {cameraOn && (
                     <div className="absolute top-4 left-0 right-0 flex justify-center pointer-events-none">
                        <div className={`px-4 py-2 rounded-full text-white font-medium shadow-lg flex items-center gap-2 transition-colors ${getStatusColor(status)}`}>
-                         {status === "CAPTURED" ? <CheckCircle2 className="w-4 h-4" /> :
-                          status === "SEARCHING_PRODUCT" ? <ScanLine className="w-4 h-4" /> :
-                          <AlertTriangle className="w-4 h-4"/> }
+                         {status === "CAPTURED" ? (
+                           <CheckCircle2 className="w-4 h-4" />
+                         ) : status === "HOLD_STEADY" || status === "PRODUCT_DETECTED" || status === "CAPTURING" ? (
+                           <RefreshCw className="w-4 h-4 animate-spin" />
+                         ) : status === "SEARCHING_PRODUCT" ? (
+                           <ScanLine className="w-4 h-4" />
+                         ) : status === "DUPLICATE" ? (
+                           <RefreshCw className="w-4 h-4" />
+                         ) : (
+                           <AlertTriangle className="w-4 h-4" />
+                         )}
                          {getStatusDisplay(status)}
                        </div>
                     </div>
