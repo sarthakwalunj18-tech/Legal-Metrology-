@@ -121,16 +121,16 @@ export default function LiveInspectionPage() {
               <Card className="lg:col-span-2 overflow-hidden shadow-sm border-slate-200">
                 <div className="bg-slate-900 aspect-video relative flex items-center justify-center rounded-t-xl overflow-hidden">
 
-                  {cameraOn ? (
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="text-center">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${!cameraOn ? "hidden" : ""}`}
+                  />
+
+                  {!cameraOn && (
+                    <div className="text-center absolute inset-0 flex flex-col justify-center items-center bg-slate-900 z-10">
                        <CameraOff className="w-12 h-12 text-slate-600 mx-auto mb-3" />
                        <p className="text-slate-400 font-medium">Camera is inactive</p>
                     </div>

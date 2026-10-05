@@ -31,6 +31,8 @@ export function useLiveScan() {
 
   const queueRef = useRef<File[]>([]);
   const isUploadingRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const mountedRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const [cameraOn, setCameraOn] = useState(false);
@@ -192,8 +194,14 @@ export function useLiveScan() {
   }, [extractAndQueueFrame]);
 
   const startCamera = async () => {
+    if (isStartingRef.current || cameraOn) return;
     try {
+      isStartingRef.current = true;
       setError(null);
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera API is not supported in this browser or requires HTTPS.");
+      }
 
       if (!canvasRef.current) {
         canvasRef.current = document.createElement("canvas");
@@ -202,15 +210,32 @@ export function useLiveScan() {
         extractCanvasRef.current = document.createElement("canvas");
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
-        audio: false,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 15, max: 30 } },
+          audio: false,
+        });
+      } catch (initialErr) {
+        console.warn("Ideal camera constraints failed, attempting fallback...", initialErr);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+      }
+
+      if (!mountedRef.current) {
+         stream.getTracks().forEach(t => t.stop());
+         return;
+      }
+
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        await videoRef.current.play().catch(e => {
+            console.error("Video play interrupted:", e);
+        });
       }
 
       setCameraOn(true);
@@ -227,11 +252,17 @@ export function useLiveScan() {
       setError(e.message || "Failed to start camera");
       setStatus("ERROR");
       setCameraOn(false);
+    } finally {
+      isStartingRef.current = false;
     }
   };
 
   useEffect(() => {
-    return () => stopCamera();
+    mountedRef.current = true;
+    return () => {
+       mountedRef.current = false;
+       stopCamera();
+    };
   }, [stopCamera]);
 
   return {
