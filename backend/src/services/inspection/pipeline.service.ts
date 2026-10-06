@@ -9,8 +9,10 @@ import {
 } from "../engine/decision.engine.js";
 import { OcrResult } from "../ocr/ocr.interface.js";
 import { PreprocessService } from "../preprocess.service.js";
-import fs from "fs/promises";
-import path from "path";
+import { ImageQualityAssessor } from "../evidence/quality.assessor.js";
+import { MultiFrameConsensusEngine } from "../evidence/consensus.service.js";
+import { SpatialLocalizer } from "../evidence/spatial.localizer.js";
+import { RawOcrFrameEvidence, RawOcrLineEvidence, RawOcrToken } from "../evidence/evidence.model.js";
 
 export class InspectionPipelineService {
   /**
@@ -39,258 +41,332 @@ export class InspectionPipelineService {
 
     try {
       const scanImages = await DBRepo.getScanImages(scanId);
-    const preprocessedImages = scanImages.filter(
-      (img) => img.imageType === "PREPROCESSED",
-    );
-    const originalImages = scanImages.filter(
-      (img) => img.imageType === "ORIGINAL",
-    );
-
-    const targetImages =
-      preprocessedImages.length > 0 ? preprocessedImages : originalImages;
-
-    if (targetImages.length === 0) {
-      await DBRepo.updateScan(scanId, { status: "FAILED", currentStage: "FAILED" });
-      throw new Error("No package images found for this scan.");
-    }
-
-    const totalStart = Date.now();
-    console.log(
-      `[OCR] Processing ${targetImages.length} package image(s) (${preprocessedImages.length} preprocessed, ${originalImages.length} original) for scan ${scan.scanNumber}`,
-    );
-
-    // 2. OCR Stage
-    await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "OCR" });
-    const ocrStart = Date.now();
-    const visionImages: { buffer: Buffer; mimeType: string }[] = [];
-    const targetImagesOrder = targetImages.map((i) => i.id);
-    const ocrResults = await Promise.all(
-      targetImages.map(async (image, idx) => {
-        console.log(
-          `[OCR] Processing image ${idx + 1}/${targetImages.length} (${image.imageType}): ${image.fileName}`,
-        );
-        const imageBuffer = await StorageService.downloadFile(image.storagePath);
-        let bufferToOcr = imageBuffer;
-        if (image.imageType === "ORIGINAL" && preprocessedImages.length === 0) {
-          const prep = await PreprocessService.preprocess(imageBuffer);
-          bufferToOcr = prep.processedBuffer;
-        }
-        // Retain the exact bytes we read so Gemini gets REAL vision input.
-        visionImages.push({ buffer: bufferToOcr, mimeType: "image/jpeg" });
-        return OcrService.extract(bufferToOcr);
-      }),
-    );
-
-    // Keep images in a stable order for multi-image prompts.
-    visionImages.sort((a, b) => targetImagesOrder.indexOf(a) - targetImagesOrder.indexOf(b));
-
-    // Combine OCR results into single inspection text
-    const combinedOcrText = ocrResults
-      .map(
-        (result, index) =>
-          `--- PACKAGE IMAGE ${index + 1} ---\n${result.rawText}`,
-      )
-      .join("\n\n");
-
-    const provider: OcrResult["provider"] = ocrResults.every(
-      (r) => r.provider === "google-cloud-vision",
-    )
-      ? "google-cloud-vision"
-      : ocrResults.every((r) => r.provider === "tesseract")
-        ? "tesseract"
-        : "unknown";
-
-    const ocrResult: OcrResult = {
-      rawText: combinedOcrText,
-      averageConfidence:
-        ocrResults.reduce((sum, r) => sum + r.averageConfidence, 0) /
-        ocrResults.length,
-      lines: ocrResults.flatMap((r) => r.lines),
-      provider,
-      processingTimeMs: ocrResults.reduce(
-        (sum, r) => sum + r.processingTimeMs,
-        0,
-      ),
-    };
-    const ocrDurationMs = Date.now() - ocrStart;
-
-    console.log(
-      `[OCR] Completed OCR across all ${ocrResults.length} image(s). Combined text length: ${combinedOcrText.length} chars.`,
-    );
-    console.log(`[PERF] OCR: ${ocrDurationMs} ms`);
-
-    // 3. Gemini Structured Extraction Stage (VISION: real image bytes + OCR aid)
-    await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "EXTRACTION" });
-    console.log(
-      `[GEMINI] Invoking Gemini vision extraction on ${visionImages.length} image(s) + ${combinedOcrText.length} chars of OCR aid...`,
-    );
-    const geminiStart = Date.now();
-    const { declarations, provenance } = await GeminiExtractor.extractDeclarations({
-      ocrText: combinedOcrText,
-      images: visionImages,
-    });
-    const geminiDurationMs = Date.now() - geminiStart;
-    console.log(
-      `[GEMINI] engine=${provenance.engine} model=${provenance.model ?? "n/a"} degraded=${provenance.degraded} attempts=${provenance.attempts}`,
-    );
-    if (provenance.degraded) {
-      console.warn(
-        `[GEMINI] DEGRADED EXTRACTION: ${provenance.reason}. Declaration confidences below are regex-derived estimates, NOT verified model output.`,
+      const preprocessedImages = scanImages.filter(
+        (img) => img.imageType === "PREPROCESSED",
       );
-    }
-    console.log(`[PERF] Gemini: ${geminiDurationMs} ms`);
+      const originalImages = scanImages.filter(
+        (img) => img.imageType === "ORIGINAL",
+      );
 
-    // 4. Product Classification Stage
-    await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "CLASSIFICATION" });
-    console.log(`[CLASSIFICATION] Determining commodity classification...`);
-    const classStart = Date.now();
-    const classification = ProductClassifier.classify(
-      declarations,
-      ocrResult.rawText,
-    );
-    const classDurationMs = Date.now() - classStart;
-    console.log(`[PERF] Classification: ${classDurationMs} ms`);
+      const targetImages =
+        preprocessedImages.length > 0 ? preprocessedImages : originalImages;
 
-    // 5. Compliance & RAG Stage
-    await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "COMPLIANCE" });
-    console.log(
-      `[COMPLIANCE] Executing deterministic rule validation and RAG grounding for '${classification.category}'...`,
-    );
-    const decision = await ComplianceDecisionEngine.evaluate(
-      declarations,
-      classification,
-      ocrResult.rawText,
-      {
-        ocrConfidence: ocrResult.averageConfidence,
-        extractionDegraded: provenance.degraded,
-      },
-    );
+      if (targetImages.length === 0) {
+        await DBRepo.updateScan(scanId, { status: "FAILED", currentStage: "FAILED" });
+        throw new Error("No package images found for this scan.");
+      }
 
-    // 6. Update Product Category in DB
-    const dbStart = Date.now();
-    await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "SAVING" });
-    if (scan.productId) {
-      await DBRepo.updateProduct(scan.productId, {
-        category: classification.category,
-        commodityType: classification.commodityType,
-      });
-    }
+      const totalStart = Date.now();
+      console.log(
+        `[OCR] Processing ${targetImages.length} package image(s) (${preprocessedImages.length} preprocessed, ${originalImages.length} original) for scan ${scan.scanNumber}`,
+      );
 
-    // 7. Persist Extracted Fields to Database concurrently
-    console.log(`[DATABASE] Persisting extracted declarations and compliance checks...`);
-    const fieldRecords = [
-      { name: "generic_name", data: declarations.generic_name },
-      { name: "manufacturer", data: declarations.manufacturer },
-      { name: "packer", data: declarations.packer },
-      { name: "net_quantity", data: declarations.net_quantity },
-      { name: "mrp", data: declarations.mrp },
-      { name: "date_of_manufacture", data: declarations.date_of_manufacture },
-      { name: "date_of_expiry", data: declarations.date_of_expiry },
-      { name: "consumer_care", data: declarations.consumer_care },
-      { name: "country_of_origin", data: declarations.country_of_origin },
-    ];
+      // 2. Image Quality Assessment & OCR Stage
+      await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "OCR" });
+      const ocrStart = Date.now();
+      const visionImages: { buffer: Buffer; mimeType: string }[] = [];
+      const targetImagesOrder = targetImages.map((i) => i.id);
 
-    await Promise.all(
-      fieldRecords
-        .filter((field) => field.data)
-        .map((field) =>
-          DBRepo.insertExtractedField({
-            scanId,
-            fieldName: field.name,
-            fieldValue: field.data.value,
-            rawText: field.data.source_text,
-            confidence: field.data.confidence.toFixed(4),
-            boundingBox: field.data.bbox,
-            rawData: field.data,
-            isPresent: field.data.value !== null,
-            validationStatus: field.data.value !== null ? "VALID" : "INVALID",
-          }),
-        ),
-    );
+      const frameResults = await Promise.all(
+        targetImages.map(async (image, idx) => {
+          console.log(
+            `[OCR] Processing image ${idx + 1}/${targetImages.length} (${image.imageType}): ${image.fileName}`,
+          );
+          const imageBuffer = await StorageService.downloadFile(image.storagePath);
+          let bufferToOcr = imageBuffer;
+          if (image.imageType === "ORIGINAL" && preprocessedImages.length === 0) {
+            const prep = await PreprocessService.preprocess(imageBuffer);
+            bufferToOcr = prep.processedBuffer;
+          }
 
-    // 8. Persist Compliance Checks and Violations concurrently
-    const allChecksToPersist = [
-      ...decision.passedChecks,
-      ...decision.violations,
-      ...decision.reviewChecks,
-    ];
+          // Retain the exact bytes we read so Gemini gets REAL vision input.
+          visionImages.push({ buffer: bufferToOcr, mimeType: "image/jpeg" });
 
-    await Promise.all(
-      allChecksToPersist.map(async (check) => {
-        const createdCheck = await DBRepo.insertComplianceCheck({
-          scanId,
-          ruleId: check.ruleId,
-          fieldName: check.fieldName,
-          status: check.status,
-          reason: check.reason,
-          confidence: check.confidence.toFixed(4),
-          evidenceText: check.evidence,
-        });
+          // Run Image Quality Assessment
+          const quality = await ImageQualityAssessor.assessQuality(bufferToOcr);
 
-        // If check failed, save as violation record
-        if (check.status === "VIOLATION") {
-          await DBRepo.insertViolation({
-            scanId,
-            checkId: createdCheck.id,
-            ruleId: check.ruleId,
-            violationType: check.title,
-            severity: check.severity,
-            title: check.title,
-            description: check.reason,
-            extractedEvidence: check.evidence,
-            boundingBox: check.boundingBox,
-            suggestedAction: check.suggestedAction,
+          // Run OCR Extraction
+          const ocr = await OcrService.extract(bufferToOcr);
+
+          const imgW = ocr.imageWidth || image.width || 1200;
+          const imgH = ocr.imageHeight || image.height || 1200;
+
+          // Convert raw OCR lines into Canonical RawOcrLineEvidence with normalized 0-1000 bounding boxes
+          const lines: RawOcrLineEvidence[] = ocr.lines.map((line) => {
+            const normalizedBox = line.bbox
+              ? SpatialLocalizer.normalizePixelBox(line.bbox, imgW, imgH)
+              : { x1: 0, y1: 0, x2: 1000, y2: 1000 };
+
+            const words: RawOcrToken[] = line.words.map((w) => ({
+              text: w.text,
+              normalizedText: w.text.trim().toLowerCase(),
+              confidence: w.confidence,
+              boundingBox: w.bbox
+                ? SpatialLocalizer.normalizePixelBox(w.bbox, imgW, imgH)
+                : normalizedBox,
+              rawBoundingBox: w.bbox,
+            }));
+
+            return {
+              text: line.text,
+              normalizedText: line.text.trim().toLowerCase(),
+              confidence: line.confidence,
+              boundingBox: normalizedBox,
+              rawBoundingBox: line.bbox,
+              words,
+              imageIndex: idx,
+            };
           });
-        }
-      }),
-    );
 
-    // 9. Update Scan Record with final status & score
-    const existingListingText = (scan.analysis as any)?.listingText;
+          const frameEvidence: RawOcrFrameEvidence = {
+            imageIndex: idx,
+            imageWidth: imgW,
+            imageHeight: imgH,
+            rawText: ocr.rawText,
+            lines,
+            averageConfidence: ocr.averageConfidence,
+            provider: ocr.provider,
+            timestamp: Date.now(),
+          };
 
-    // Phase 30: Officer review confidence thresholds mapping
-    const needsOfficerReview =
-      decision.summary.requiresReview > 0 ||
-      decision.summary.unverifiable > 0 ||
-      ocrResult.averageConfidence < 0.6 ||
-      provenance.degraded ||
-      decision.complianceStatus === "NON_COMPLIANT";
+          return { quality, ocr, frameEvidence };
+        }),
+      );
 
-    const autoReviewStatus = needsOfficerReview ? "OFFICER_REVIEW_REQUIRED" : "AUTO_VERIFIED";
+      // Keep images in a stable order for multi-image prompts.
+      visionImages.sort((a, b) => targetImagesOrder.indexOf(a) - targetImagesOrder.indexOf(b));
 
-    await DBRepo.updateScan(scanId, {
-      status: "COMPLETED",
-      currentStage: "COMPLETED",
-      complianceStatus: decision.complianceStatus,
-      complianceScore: decision.complianceScore.toFixed(2),
-      reviewStatus: autoReviewStatus,
-      analysis: {
-        ...(existingListingText ? { listingText: existingListingText } : {}),
+      const ocrResults = frameResults.map((r) => r.ocr);
+      const rawOcrFrames = frameResults.map((r) => r.frameEvidence);
+      const qualityReports = frameResults.map((r) => r.quality);
+      const avgQualityScore =
+        qualityReports.reduce((acc, q) => acc + q.overallScore, 0) / Math.max(1, qualityReports.length);
+
+      // Combine OCR results into single inspection text
+      const combinedOcrText = ocrResults
+        .map(
+          (result, index) =>
+            `--- PACKAGE IMAGE ${index + 1} ---\n${result.rawText}`,
+        )
+        .join("\n\n");
+
+      const provider: OcrResult["provider"] = ocrResults.every(
+        (r) => r.provider === "google-cloud-vision",
+      )
+        ? "google-cloud-vision"
+        : ocrResults.every((r) => r.provider === "tesseract")
+          ? "tesseract"
+          : "unknown";
+
+      const ocrResult: OcrResult = {
+        rawText: combinedOcrText,
+        averageConfidence:
+          ocrResults.reduce((sum, r) => sum + r.averageConfidence, 0) /
+          ocrResults.length,
+        lines: ocrResults.flatMap((r) => r.lines),
+        provider,
+        processingTimeMs: ocrResults.reduce(
+          (sum, r) => sum + r.processingTimeMs,
+          0,
+        ),
+      };
+      const ocrDurationMs = Date.now() - ocrStart;
+
+      console.log(
+        `[OCR] Completed OCR across all ${ocrResults.length} image(s). Combined text length: ${combinedOcrText.length} chars.`,
+      );
+      console.log(`[PERF] OCR: ${ocrDurationMs} ms`);
+
+      // 3. Gemini Structured Extraction Stage (VISION: real image bytes + OCR aid)
+      await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "EXTRACTION" });
+      console.log(
+        `[GEMINI] Invoking Gemini vision extraction on ${visionImages.length} image(s) + ${combinedOcrText.length} chars of OCR aid...`,
+      );
+      const geminiStart = Date.now();
+      const { declarations: rawGeminiDeclarations, provenance } = await GeminiExtractor.extractDeclarations({
+        ocrText: combinedOcrText,
+        images: visionImages,
+      });
+      const geminiDurationMs = Date.now() - geminiStart;
+      console.log(
+        `[GEMINI] engine=${provenance.engine} model=${provenance.model ?? "n/a"} degraded=${provenance.degraded} attempts=${provenance.attempts}`,
+      );
+      if (provenance.degraded) {
+        console.warn(
+          `[GEMINI] DEGRADED EXTRACTION: ${provenance.reason}. Declaration confidences below are regex-derived estimates, NOT verified model output.`,
+        );
+      }
+      console.log(`[PERF] Gemini: ${geminiDurationMs} ms`);
+
+      // 3b. Multi-Frame Consensus Reconciler & True Spatial Anchor Engine
+      const consensus = MultiFrameConsensusEngine.reconcile(
+        rawOcrFrames,
+        rawGeminiDeclarations,
+        avgQualityScore
+      );
+      const declarations = consensus.declarations;
+
+      // 4. Product Classification Stage
+      await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "CLASSIFICATION" });
+      console.log(`[CLASSIFICATION] Determining commodity classification...`);
+      const classStart = Date.now();
+      const classification = ProductClassifier.classify(
         declarations,
-        extraction: provenance,
-        ocr: {
-          provider,
-          averageConfidence: ocrResult.averageConfidence,
-          lineCount: ocrResult.lines.length,
+        ocrResult.rawText,
+      );
+      const classDurationMs = Date.now() - classStart;
+      console.log(`[PERF] Classification: ${classDurationMs} ms`);
+
+      // 5. Compliance & RAG Stage
+      await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "COMPLIANCE" });
+      console.log(
+        `[COMPLIANCE] Executing deterministic rule validation and RAG grounding for '${classification.category}'...`,
+      );
+      const decision = await ComplianceDecisionEngine.evaluate(
+        declarations,
+        classification,
+        ocrResult.rawText,
+        {
+          ocrConfidence: ocrResult.averageConfidence,
+          extractionDegraded: provenance.degraded,
         },
+      );
+
+      // 6. Update Product Category in DB
+      const dbStart = Date.now();
+      await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "SAVING" });
+      if (scan.productId) {
+        await DBRepo.updateProduct(scan.productId, {
+          category: classification.category,
+          commodityType: classification.commodityType,
+        });
+      }
+
+      // 7. Persist Extracted Fields to Database concurrently
+      console.log(`[DATABASE] Persisting extracted declarations and compliance checks...`);
+      const fieldRecords = [
+        { name: "generic_name", data: declarations.generic_name },
+        { name: "manufacturer", data: declarations.manufacturer },
+        { name: "packer", data: declarations.packer },
+        { name: "net_quantity", data: declarations.net_quantity },
+        { name: "mrp", data: declarations.mrp },
+        { name: "date_of_manufacture", data: declarations.date_of_manufacture },
+        { name: "date_of_expiry", data: declarations.date_of_expiry },
+        { name: "consumer_care", data: declarations.consumer_care },
+        { name: "country_of_origin", data: declarations.country_of_origin },
+      ];
+
+      await Promise.all(
+        fieldRecords
+          .filter((field) => field.data)
+          .map((field) =>
+            DBRepo.insertExtractedField({
+              scanId,
+              fieldName: field.name,
+              fieldValue: field.data.value,
+              rawText: field.data.source_text,
+              confidence: field.data.confidence.toFixed(4),
+              boundingBox: field.data.bbox,
+              rawData: {
+                ...field.data,
+                candidate: consensus.fieldCandidates[field.name],
+              },
+              isPresent: field.data.value !== null,
+              validationStatus: field.data.value !== null ? "VALID" : "INVALID",
+            }),
+          ),
+      );
+
+      // 8. Persist Compliance Checks and Violations concurrently
+      const allChecksToPersist = [
+        ...decision.passedChecks,
+        ...decision.violations,
+        ...decision.reviewChecks,
+        ...decision.unverifiableChecks,
+      ];
+
+      await Promise.all(
+        allChecksToPersist.map(async (check) => {
+          const createdCheck = await DBRepo.insertComplianceCheck({
+            scanId,
+            ruleId: check.ruleId,
+            fieldName: check.fieldName,
+            status: check.status,
+            reason: check.reason,
+            confidence: check.confidence.toFixed(4),
+            evidenceText: check.evidence,
+          });
+
+          // If check failed, save as violation record
+          if (check.status === "VIOLATION") {
+            await DBRepo.insertViolation({
+              scanId,
+              checkId: createdCheck.id,
+              ruleId: check.ruleId,
+              violationType: check.title,
+              severity: check.severity,
+              title: check.title,
+              description: check.reason,
+              extractedEvidence: check.evidence,
+              boundingBox: check.boundingBox,
+              suggestedAction: check.suggestedAction,
+            });
+          }
+        }),
+      );
+
+      // 9. Update Scan Record with final status & score
+      const existingListingText = (scan.analysis as any)?.listingText;
+
+      const needsOfficerReview =
+        decision.summary.requiresReview > 0 ||
+        decision.summary.unverifiable > 0 ||
+        ocrResult.averageConfidence < 0.6 ||
+        provenance.degraded ||
+        consensus.conflicts.length > 0 ||
+        decision.complianceStatus === "NON_COMPLIANT";
+
+      const autoReviewStatus = needsOfficerReview ? "OFFICER_REVIEW_REQUIRED" : "AUTO_VERIFIED";
+
+      await DBRepo.updateScan(scanId, {
+        status: "COMPLETED",
+        currentStage: "COMPLETED",
+        complianceStatus: decision.complianceStatus,
+        complianceScore: decision.complianceScore.toFixed(2),
+        reviewStatus: autoReviewStatus,
+        analysis: {
+          ...(existingListingText ? { listingText: existingListingText } : {}),
+          declarations,
+          extraction: provenance,
+          consensus: {
+            conflicts: consensus.conflicts,
+            overallConsensusConfidence: consensus.overallConsensusConfidence,
+            fieldCandidates: consensus.fieldCandidates,
+          },
+          imageQuality: qualityReports,
+          ocr: {
+            provider,
+            averageConfidence: ocrResult.averageConfidence,
+            lineCount: ocrResult.lines.length,
+          },
+          ...decision,
+        },
+      });
+      const dbDurationMs = Date.now() - dbStart;
+      console.log(`[PERF] Persistence: ${dbDurationMs} ms`);
+
+      const totalDurationMs = Date.now() - totalStart;
+      console.log(`[PERF] TOTAL: ${totalDurationMs} ms`);
+
+      console.log(
+        `[ANALYSIS] Inspection complete for scan ${scan.scanNumber}. Status: ${decision.complianceStatus}, Score: ${decision.complianceScore}%`,
+      );
+
+      return {
+        scanId: scan.id,
+        scanNumber: scan.scanNumber,
         ...decision,
-      },
-    });
-    const dbDurationMs = Date.now() - dbStart;
-    console.log(`[PERF] Persistence: ${dbDurationMs} ms`);
-
-    const totalDurationMs = Date.now() - totalStart;
-    console.log(`[PERF] TOTAL: ${totalDurationMs} ms`);
-
-    console.log(
-      `[ANALYSIS] Inspection complete for scan ${scan.scanNumber}. Status: ${decision.complianceStatus}, Score: ${decision.complianceScore}%`,
-    );
-
-    return {
-      scanId: scan.id,
-      scanNumber: scan.scanNumber,
-      ...decision,
-    };
+      };
     } catch (err: any) {
       console.error(`[PIPELINE] FATAL ERROR processing scan ${scanId}:`, err);
       try {

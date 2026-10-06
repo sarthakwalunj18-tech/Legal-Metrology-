@@ -30,6 +30,8 @@ export interface OcrResult {
   lines: OcrLine[];
   provider: OcrProviderName;
   processingTimeMs: number;
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 export interface IOcrProvider {

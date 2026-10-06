@@ -57,6 +57,8 @@ export class TesseractOcrProvider implements IOcrProvider {
 
     const lines = TesseractOcrProvider.collectLines(data);
     const rawText = (data?.text ?? "").trim();
+    const imageWidth = data?.image_width || 1200;
+    const imageHeight = data?.image_height || 1200;
 
     return {
       rawText,
@@ -65,6 +67,8 @@ export class TesseractOcrProvider implements IOcrProvider {
       lines,
       provider: "tesseract",
       processingTimeMs: Date.now() - start,
+      imageWidth,
+      imageHeight,
     };
   }
 }

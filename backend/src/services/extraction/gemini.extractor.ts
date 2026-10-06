@@ -26,12 +26,10 @@ IMPORTANT RULES:
    - confidence
    - bbox
 6. confidence MUST always be a number between 0 and 1.
-7. BOUNDING BOXES (critical for Rule 7 placement and Rule 8 font-size checks):
-   - When a declaration IS found on the image, return its bbox as a tight box around that printed text.
-   - Use NORMALISED integer coordinates on a 0-1000 scale for BOTH axes: 0 = top/left edge, 1000 = bottom/right edge, regardless of the real image resolution.
-   - Format: {"x1": int, "y1": int, "x2": int, "y2": int} with x2 > x1 and y2 > y1.
-   - Return bbox: null ONLY when the declaration is absent (value is null).
-   - Never fabricate a bounding box for a declaration you did not actually locate.
+7. BOUNDING BOXES:
+   - DO NOT INVENT ARBITRARY COORDINATES. You must ALWAYS return "bbox": null for every field.
+   - A deterministic spatial engine will map your extracted source_text to the true OCR document coordinates.
+   - Just ensure source_text exactly matches the characters printed on the package so the localizer can find it!
 8. other_declarations MUST ALWAYS be an array.
 9. If there are no other declarations, return [].
 10. Return ONLY valid JSON. No markdown, explanations, or code fences.
@@ -220,6 +218,8 @@ Return ONLY the JSON object.
 export interface ExtractionInput {
   /** OCR text is a noisy aid; the images are the source of truth. */
   ocrText: string;
+  /** Full structured OCR evidence to reconstruct spatial coordinates reliably. */
+  ocrResult?: OcrResult;
   /** Preprocessed package images to send to Gemini as real vision input. */
   images?: { buffer: Buffer; mimeType: string }[];
 }
@@ -291,9 +291,11 @@ export class GeminiExtractor {
         ? { ocrText: (input as OcrResult).rawText, images: [] }
         : (input as ExtractionInput);
 
-    const ocrProvider = "rawText" in (input as OcrResult)
-      ? (input as OcrResult).provider
-      : undefined;
+    const ocrResultObj = "rawText" in (input as OcrResult)
+      ? (input as OcrResult)
+      : (input as ExtractionInput).ocrResult;
+
+    const ocrProvider = ocrResultObj?.provider;
 
     const imageCount = images?.length ?? 0;
 
