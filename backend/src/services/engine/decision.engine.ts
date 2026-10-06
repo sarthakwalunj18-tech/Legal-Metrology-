@@ -99,13 +99,13 @@ export class ComplianceDecisionEngine {
       };
     });
 
-    const evaluatedFields = passedChecks.length + failedChecks.length;
+    const evaluatedFields = passedChecks.length + failedChecks.length + unverifiableChecks.length + reviewChecks.length;
     let score = 0;
     if (evaluatedFields > 0) {
-      // Meaningful verified compliance rate based ONLY on known elements
+      // Compliance rate requires verifiable evidence. Unverifiable counts against the score.
       score = Math.round((passedChecks.length / evaluatedFields) * 100);
     } else {
-      score = 0; // Or null representing N/A, but we can stick to 0 if nothing evaluated.
+      score = 0;
     }
 
     let complianceStatus: "COMPLIANT" | "NON_COMPLIANT" | "REQUIRES_REVIEW";

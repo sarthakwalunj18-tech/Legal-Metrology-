@@ -12,6 +12,7 @@ export type LiveScanStatus =
   | "GOOD_POSITION"
   | "TOO_DARK"
   | "TOO_BRIGHT"
+  | "BAD_COLOR_CAST"
   | "TOO_BLURRY"
   | "MOVING"
   | "PARTIALLY_OUTSIDE"

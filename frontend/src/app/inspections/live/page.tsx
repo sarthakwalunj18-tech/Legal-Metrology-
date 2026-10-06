@@ -61,6 +61,8 @@ export default function LiveInspectionPage() {
         return "Too dark — increase lighting";
       case "TOO_BRIGHT":
         return "Too bright — reduce glare";
+      case "BAD_COLOR_CAST":
+        return "Unnatural lighting — adjust light";
       case "TOO_BLURRY":
         return "Image blurry — hold steady";
       case "MOVING":

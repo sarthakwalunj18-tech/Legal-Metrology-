@@ -9,6 +9,7 @@ export interface FrameQualityResult {
     | "GOOD_POSITION"
     | "TOO_DARK"
     | "TOO_BRIGHT"
+    | "BAD_COLOR_CAST"
     | "TOO_BLURRY"
     | "MOVING"
     | "NO_PRODUCT"
@@ -72,6 +73,8 @@ export function evaluateFrame(
     status = "TOO_DARK";
   } else if (brightness.status === "TOO_BRIGHT") {
     status = "TOO_BRIGHT";
+  } else if (brightness.status === "BAD_COLOR_CAST") {
+    status = "BAD_COLOR_CAST";
   } else if (!stability.isStable) {
     status = "MOVING";
   } else if (!blur.isSharp) {
