@@ -253,9 +253,8 @@ export default function DashboardPage() {
                     {health.dependencies.supabase.latencyMs}ms)
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full font-medium border border-amber-200">
-                    <Clock3 className="w-3 h-3" /> Standby (
-                    {health?.dependencies.supabase.latencyMs || 0}ms)
+                  <span className="inline-flex items-center gap-1 text-red-700 bg-red-50 px-2 py-0.5 rounded-full font-medium border border-red-200">
+                    <AlertTriangle className="w-3 h-3" /> Disconnected
                   </span>
                 )}
               </div>

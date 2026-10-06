@@ -36,8 +36,8 @@ export const healthRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       },
     };
 
-    // Return 200 even if degraded so health checkers can inspect the json payload, or 503 if strict
-    return reply.status(isHealthy ? 200 : 503).send(responsePayload);
+    // Return 200 even if degraded so health checkers can inspect the json payload accurately in the UI.
+    return reply.status(200).send(responsePayload);
   });
 
   fastify.get("/health/live", async (request, reply) => {
