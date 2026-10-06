@@ -31,7 +31,10 @@ export const scanRoutes: FastifyPluginAsync = async (
       }
 
       // Fast preprocess
-      const preprocessResult = await PreprocessService.preprocess(imageBuffer);
+      const cropBoxStr = (request.body as any)?.cropBox;
+      let cropBox = undefined;
+      try { if (cropBoxStr) cropBox = JSON.parse(cropBoxStr); } catch (e) {}
+      const preprocessResult = await PreprocessService.preprocess(imageBuffer, cropBox);
 
       // OCR & Extract
       const ocrResult = await OcrService.extract(preprocessResult.processedBuffer);
@@ -63,6 +66,7 @@ export const scanRoutes: FastifyPluginAsync = async (
       let brand = "";
       let location = "Inspection Field Office";
       let listingText: string | undefined;
+      let bboxes: any[] = [];
 
       const parts = request.parts({
         limits: {
@@ -118,6 +122,11 @@ export const scanRoutes: FastifyPluginAsync = async (
 
           if (part.fieldname === "listingText") {
             listingText = String(value);
+          }
+          if (part.fieldname === "bboxes") {
+            try {
+              bboxes = JSON.parse(String(value));
+            } catch (e) {}
           }
         }
       }
@@ -204,7 +213,8 @@ export const scanRoutes: FastifyPluginAsync = async (
           // 2. Create and store preprocessed image derivative
           console.log(`[PREPROCESS] Preprocessing image ${idx + 1}/${files.length}: ${file.filename}`);
           const prepStart = Date.now();
-          const preprocessResult = await PreprocessService.preprocess(file.buffer);
+          const cropBox = bboxes[idx] || undefined;
+          const preprocessResult = await PreprocessService.preprocess(file.buffer, cropBox);
           const prepMs = Date.now() - prepStart;
 
           const storePrepStart = Date.now();

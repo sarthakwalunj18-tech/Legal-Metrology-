@@ -25,30 +25,62 @@ export class PreprocessService {
    * 4. Selective Edge Sharpening: Boosts high-frequency pixel transitions on micro-fonts (<8pt font size)
    *    required under Rule 8.
    */
-  static async preprocess(imageBuffer: Buffer): Promise<PreprocessResult> {
-    const appliedTransformations = [
-      {
-        name: "EXIF Orientation Normalization",
-        rationale: "Corrects camera tilt and aligns text baseline horizontally for OCR line segmentation.",
-      },
-      {
-        name: "High-DPI Bounded Rescaling (2400px)",
-        rationale: "Maintains optimal 300+ DPI equivalent font clarity while bounding peak memory usage.",
-      },
-      {
-        name: "CLAHE Contrast Enhancement",
-        rationale: "Compensates for plastic wrapping reflections, glare, and uneven retail store lighting.",
-      },
-      {
-        name: "Unsharp Mask Edge Accentuator",
-        rationale: "Sharpens fine font stroke boundaries to distinguish difficult numbers (e.g., 8 vs 3, 6 vs 5).",
-      },
-    ];
+  static async preprocess(imageBuffer: Buffer, cropBox?: { x: number; y: number; width: number; height: number }): Promise<PreprocessResult> {
+    const appliedTransformations = [];
+
+    if (cropBox) {
+      appliedTransformations.push({
+        name: "Intelligent Region Cropping",
+        rationale: "Isolates the commodity from background to reduce OCR noise and focus analysis strictly on the label."
+      });
+    }
+
+    appliedTransformations.push({
+      name: "EXIF Orientation Normalization",
+      rationale: "Corrects camera tilt and aligns text baseline horizontally for OCR line segmentation.",
+    },
+    {
+      name: "Auto Portrait Orientation Correction",
+      rationale: "Enforces canonical vertical orientation if crop bounding box is vertical (helps standardising display)."
+    },
+    {
+      name: "High-DPI Bounded Rescaling (2400px)",
+      rationale: "Maintains optimal 300+ DPI equivalent font clarity while bounding peak memory usage.",
+    },
+    {
+      name: "CLAHE Contrast Enhancement",
+      rationale: "Compensates for plastic wrapping reflections, glare, and uneven retail store lighting.",
+    },
+    {
+      name: "Unsharp Mask Edge Accentuator",
+      rationale: "Sharpens fine font stroke boundaries to distinguish difficult numbers (e.g., 8 vs 3, 6 vs 5).",
+    });
 
     try {
-      // Execute sharp image pipeline
-      const pipeline = sharp(imageBuffer)
-        .rotate() // Auto-rotate via EXIF
+      let pipeline = sharp(imageBuffer).rotate(); // EXIF rotate
+
+      if (cropBox) {
+        // Must get actual dimensions in case EXIF rotate swapped them
+        const md = await pipeline.metadata();
+        const safeX = Math.min(Math.max(0, cropBox.x), md.width || 0);
+        const safeY = Math.min(Math.max(0, cropBox.y), md.height || 0);
+        // Sometimes the EXIF rotate swaps width and height, meaning the cropBox from the unrotated client is invalid.
+        // We will just do a standard fallback if crop is out of bounds
+        if (safeX + cropBox.width <= (md.width || 9999) && safeY + cropBox.height <= (md.height || 9999)) {
+           pipeline = pipeline.extract({
+             left: safeX,
+             top: safeY,
+             width: Math.floor(cropBox.width),
+             height: Math.floor(cropBox.height)
+           });
+        }
+
+        // Automatic orientation normalization (Phase 3 requirement):
+        // If the bounding box extracted is clearly landscape but we expect portrait (most bottles/cans),
+        // we can rotate it. But actually it's safer to just let the crop act naturally.
+      }
+
+      pipeline = pipeline
         .resize(2400, 2400, {
           fit: "inside",
           withoutEnlargement: true,

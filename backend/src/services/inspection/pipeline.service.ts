@@ -37,7 +37,8 @@ export class InspectionPipelineService {
 
     await DBRepo.updateScan(scanId, { status: "PROCESSING", currentStage: "PREPROCESSING" });
 
-    const scanImages = await DBRepo.getScanImages(scanId);
+    try {
+      const scanImages = await DBRepo.getScanImages(scanId);
     const preprocessedImages = scanImages.filter(
       (img) => img.imageType === "PREPROCESSED",
     );
@@ -227,7 +228,7 @@ export class InspectionPipelineService {
         });
 
         // If check failed, save as violation record
-        if (check.status === "FAIL") {
+        if (check.status === "VIOLATION") {
           await DBRepo.insertViolation({
             scanId,
             checkId: createdCheck.id,
@@ -246,11 +247,23 @@ export class InspectionPipelineService {
 
     // 9. Update Scan Record with final status & score
     const existingListingText = (scan.analysis as any)?.listingText;
+
+    // Phase 30: Officer review confidence thresholds mapping
+    const needsOfficerReview =
+      decision.summary.requiresReview > 0 ||
+      decision.summary.unverifiable > 0 ||
+      ocrResult.averageConfidence < 0.6 ||
+      provenance.degraded ||
+      decision.complianceStatus === "NON_COMPLIANT";
+
+    const autoReviewStatus = needsOfficerReview ? "OFFICER_REVIEW_REQUIRED" : "AUTO_VERIFIED";
+
     await DBRepo.updateScan(scanId, {
       status: "COMPLETED",
       currentStage: "COMPLETED",
       complianceStatus: decision.complianceStatus,
       complianceScore: decision.complianceScore.toFixed(2),
+      reviewStatus: autoReviewStatus,
       analysis: {
         ...(existingListingText ? { listingText: existingListingText } : {}),
         declarations,
@@ -278,5 +291,14 @@ export class InspectionPipelineService {
       scanNumber: scan.scanNumber,
       ...decision,
     };
+    } catch (err: any) {
+      console.error(`[PIPELINE] FATAL ERROR processing scan ${scanId}:`, err);
+      try {
+        await DBRepo.updateScan(scanId, { status: "FAILED", currentStage: "FAILED" });
+      } catch (safeErr) {
+        console.error(`[PIPELINE] Failed to update scan status to FAILED:`, safeErr);
+      }
+      throw err;
+    }
   }
 }

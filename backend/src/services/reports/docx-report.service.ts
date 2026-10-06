@@ -52,9 +52,9 @@ export class DocxReportService {
       { key: "country_of_origin", label: "Country of Origin" },
     ];
 
-    const passed = complianceChecks.filter((c: any) => c.status === "PASS");
-    const failed = complianceChecks.filter((c: any) => c.status === "FAIL");
-    const review = complianceChecks.filter((c: any) => c.status === "REVIEW");
+    const passed = complianceChecks.filter((c: any) => c.status === "COMPLIANT");
+    const failed = complianceChecks.filter((c: any) => c.status === "VIOLATION");
+    const review = complianceChecks.filter((c: any) => c.status === "NEEDS_REVIEW" || c.status === "UNVERIFIABLE");
 
     const citations: any[] = scan.analysis?.retrievedContext || [];
 

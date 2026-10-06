@@ -120,9 +120,9 @@ export class ReportService {
     doc.moveDown(1);
 
     // --- 4. COMPLIANCE SUMMARY & PASSED CHECKS ---
-    const passed = complianceChecks.filter((c: any) => c.status === "PASS");
-    const failed = complianceChecks.filter((c: any) => c.status === "FAIL");
-    const review = complianceChecks.filter((c: any) => c.status === "REVIEW");
+    const passed = complianceChecks.filter((c: any) => c.status === "COMPLIANT");
+    const failed = complianceChecks.filter((c: any) => c.status === "VIOLATION");
+    const review = complianceChecks.filter((c: any) => c.status === "NEEDS_REVIEW" || c.status === "UNVERIFIABLE");
 
     doc.fillColor(primaryColor).font("Helvetica-Bold").fontSize(10.5).text("4. COMPLIANCE SUMMARY & PASSED CHECKS", { underline: true });
     doc.moveDown(0.3);
