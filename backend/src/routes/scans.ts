@@ -17,12 +17,14 @@ export const scanRoutes: FastifyPluginAsync = async (
       const parts = request.parts({ limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
       let imageBuffer: Buffer | null = null;
       let mimetype = "";
+      let cropBoxStr = "";
 
       for await (const part of parts) {
         if (part.type === "file") {
           imageBuffer = await part.toBuffer();
           mimetype = part.mimetype;
-          break; // Only need 1
+        } else if (part.type === "field" && part.fieldname === "cropBox") {
+          cropBoxStr = part.value as string;
         }
       }
 
@@ -31,7 +33,6 @@ export const scanRoutes: FastifyPluginAsync = async (
       }
 
       // Fast preprocess
-      const cropBoxStr = (request.body as any)?.cropBox;
       let cropBox = undefined;
       try { if (cropBoxStr) cropBox = JSON.parse(cropBoxStr); } catch (e) {}
       const preprocessResult = await PreprocessService.preprocess(imageBuffer, cropBox);

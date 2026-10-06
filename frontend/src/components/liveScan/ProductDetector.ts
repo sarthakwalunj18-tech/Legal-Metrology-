@@ -65,8 +65,8 @@ export function detectProductAndPosition(
       }
 
       // Check for sharp edges (text, barcodes, product outlines)
-      // Increasing the threshold slightly to ignore soft gradients (like faces/clothes)
-      if (grad > 8) {
+      // Increasing the threshold heavily to ignore soft gradients (like faces/clothes)
+      if (grad > 20) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -100,8 +100,8 @@ export function detectProductAndPosition(
   let position: ProductDetectionResult["position"] = "GOOD_POSITION";
   let framingScore = 80;
 
-  if (skinRatio > 0.15 && presenceScore < 40) {
-    // If significantly skin-colored and lacks extremely dense product-like geometry, it's a person/face.
+  if (skinRatio > 0.08 && presenceScore < 55) {
+    // If significantly skin-colored and lacks extreme high-contrast geometries, it's a person/face.
     position = "HUMAN_FACE_REJECTED";
     framingScore = 0;
     presenceScore = 0; // Force rejection
