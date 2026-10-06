@@ -7,8 +7,8 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
-import { Eye, Search, Plus, Filter, Calendar, UserCheck } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
+import { Eye, Search, Plus, Filter, Calendar, UserCheck, AlertCircle, RefreshCw } from "lucide-react";
+import { apiClient } from "@/lib/api";
 import { Video } from "lucide-react";
 
 export default function InspectionsListPage() {
@@ -17,19 +17,26 @@ export default function InspectionsListPage() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [inspectorFilter, setInspectorFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchScans = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiClient<any>("/api/scans");
+      if (data.success && data.data.scans) {
+        setScans(data.data.scans);
+      }
+    } catch (err: any) {
+      console.warn("[FRONTEND] API Client caught error loading scans:", err.message);
+      setError("Unable to connect to inspection service: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/scans`, {
-      headers: { authorization: "Bearer dev-inspector" },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.data.scans) {
-          setScans(data.data.scans);
-        }
-      })
-      .catch((err) => console.error("[FRONTEND] Error loading scans:", err))
-      .finally(() => setLoading(false));
+    fetchScans();
   }, []);
 
   const filteredScans = scans.filter((s) => {
@@ -100,6 +107,23 @@ export default function InspectionsListPage() {
               </Button>
             </Link>
           </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                <div>
+                  <h3 className="font-semibold text-sm">Failed to connect to backend</h3>
+                  <p className="text-xs mt-0.5">{error}</p>
+                </div>
+              </div>
+              <Button onClick={() => fetchScans()} variant="secondary" className="bg-white hover:bg-slate-50 border-red-200">
+                <RefreshCw className="w-4 h-4 mr-2 text-red-600" />
+                <span className="text-red-700">Retry request</span>
+              </Button>
+            </div>
+          )}
 
           {/* Search & Multi-Filter Control Panel */}
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
