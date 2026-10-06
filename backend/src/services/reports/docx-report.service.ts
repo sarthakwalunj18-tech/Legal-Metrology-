@@ -120,7 +120,7 @@ export class DocxReportService {
             // 5. DETECTED STATUTORY VIOLATIONS
             new Paragraph({ children: [new TextRun({ text: "5. DETECTED STATUTORY VIOLATIONS", bold: true, underline: {}, size: 21, color: "DC2626" })] }),
             ...(scanViolations.length === 0 && failed.length === 0
-              ? [new Paragraph({ children: [new TextRun({ text: "✓ Zero statutory violations detected. Package complies with mandatory Rule 6 declarations.", color: "15803D" })] })]
+              ? [new Paragraph({ children: [new TextRun({ text: review.length > 0 ? "⚠ No explicit violations confirmed, but several items are UNVERIFIABLE or require MANUAL REVIEW." : "✓ Zero statutory violations detected. Package complies with mandatory Rule 6 declarations.", color: review.length > 0 ? "B45309" : "15803D" })] })]
               : (scanViolations.length > 0 ? scanViolations : failed).map((v: any, idx: number) => [
                   new Paragraph({ children: [new TextRun({ text: `Violation ${idx + 1}: [Rule ${v.ruleId}] ${v.title || v.violationType || "Rule Failure"} (${v.severity || "HIGH"})`, bold: true, color: "DC2626" })] }),
                   new Paragraph({ children: [new TextRun({ text: ` Description     : ${v.description || v.reason}` })] }),

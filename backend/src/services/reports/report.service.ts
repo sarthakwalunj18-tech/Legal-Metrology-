@@ -148,7 +148,11 @@ export class ReportService {
     doc.font("Helvetica").fontSize(8.5).fillColor(textColor);
 
     if (scanViolations.length === 0 && failed.length === 0) {
-      doc.fillColor(successColor).text("✓ Zero statutory violations detected. Package complies with mandatory Rule 6 declarations.");
+      if (review.length > 0) {
+        doc.fillColor(warningColor).text("⚠ No explicit violations confirmed, but several items are UNVERIFIABLE or require MANUAL REVIEW.");
+      } else {
+        doc.fillColor(successColor).text("✓ Zero statutory violations detected. Package complies with mandatory Rule 6 declarations.");
+      }
     } else {
       const allViolations = scanViolations.length > 0 ? scanViolations : failed;
       allViolations.forEach((v: any, idx: number) => {
