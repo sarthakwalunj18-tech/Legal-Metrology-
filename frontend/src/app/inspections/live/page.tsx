@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import Link from "next/link";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
@@ -48,10 +48,14 @@ export default function LiveInspectionPage() {
       case "CAPTURING":
         return "Capturing view...";
       case "CAPTURED":
-        return viewsCaptured > 0
-          ? `View ${viewsCaptured} captured! Rotate product`
-          : "View captured! Rotate product";
+        if (viewsCaptured > 0 && coverage.missing.length > 0) {
+          return `View ${viewsCaptured} captured! Pivot to reveal ${coverage.missing[0]}`;
+        }
+        return "View captured! Rotate product";
       case "DUPLICATE":
+        if (coverage.missing.length > 0) {
+          return `Similar view — pivot to reveal ${coverage.missing[0]}`;
+        }
         return "Similar view — rotate product";
       case "TOO_DARK":
         return "Too dark — increase lighting";
@@ -102,6 +106,14 @@ export default function LiveInspectionPage() {
       window.location.href = '/inspections';
     }
   }, [finishSessionScan]);
+
+  // Phase 7-8: Adaptive Stopping based on coverage
+  useEffect(() => {
+    // Stop early if 100% of mandatory fields are extracted with sufficient confidence
+    if (coverage.percent === 100 && !isFinishing && viewsCaptured >= 2) {
+      handleFinishScan();
+    }
+  }, [coverage.percent, isFinishing, viewsCaptured, handleFinishScan]);
 
   return (
     <div className="flex bg-slate-50 min-h-screen text-slate-800">

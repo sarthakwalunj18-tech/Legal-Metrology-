@@ -15,6 +15,7 @@ export interface FrameQualityResult {
     | "PARTIALLY_OUTSIDE"
     | "TOO_SMALL";
   qualityScore: number;
+  boundingBox?: { x: number; y: number; width: number; height: number };
   metrics: {
     presence: number;
     framing: number;
@@ -100,6 +101,7 @@ export function evaluateFrame(
     isAcceptable,
     status,
     qualityScore,
+    boundingBox: product.boundingBox,
     metrics
   };
 }

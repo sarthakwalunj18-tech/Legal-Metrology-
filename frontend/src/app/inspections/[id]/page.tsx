@@ -327,15 +327,13 @@ export default function InspectionDetailPage({
             <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div className="text-xs text-amber-900 space-y-1">
-                <p className="font-bold">
-                  Degraded extraction — this inspection was NOT verified by vision
-                  model.
+                <p className="font-bold text-sm">
+                  AI EXTRACTION UNAVAILABLE
                 </p>
                 <p>
-                  {extraction.reason ??
-                    "Vision extraction was unavailable; declarations were derived by regex from noisy OCR."}{" "}
-                  Treat all findings as indicative and re-capture the package before
-                  issuing any statutory notice.
+                  The structured AI extraction service is currently unconfigured or offline.
+                  Declarations shown below are unverified OCR-regex estimates only. Do NOT
+                  rely on these values for statutory compliance or infringement notices.
                 </p>
               </div>
             </div>
@@ -346,9 +344,8 @@ export default function InspectionDetailPage({
               <p className="text-xs text-amber-900">
                 Low OCR legibility (mean confidence{" "}
                 {((ocrInfo?.averageConfidence ?? 0) * 100).toFixed(0)}%). Any
-                "missing declaration" finding below is flagged for officer review
-                rather than recorded as a violation, because a declaration cannot be
-                proven absent from an unreadable panel.
+                "missing declaration" finding below is flagged as "UNVERIFIABLE"
+                rather than recorded as a violation.
               </p>
             </div>
           )}
@@ -381,19 +378,40 @@ export default function InspectionDetailPage({
               </p>
             </div>
 
-            <div className="flex items-center gap-6 border-t md:border-t-0 md:border-l border-slate-200 pt-4 md:pt-0 md:pl-6">
-              <div className="text-center">
+            <div className="flex flex-col md:flex-row items-center gap-6 border-t md:border-t-0 md:border-l border-slate-200 pt-4 md:pt-0 md:pl-6 w-full lg:w-auto">
+              {/* Added Information Coverage / Verified Compliance UI block */}
+              <div className="flex flex-col gap-1 text-xs px-2 w-full max-w-[280px]">
+                <div className="text-slate-500 font-semibold mb-1 uppercase tracking-wider text-[10px]">Inspection Evidence Status</div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500"></div><span className="text-slate-700">Verified compliant</span></div>
+                  <span className="font-semibold text-slate-900">{analysis?.summary?.passed ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500"></div><span className="text-slate-700">Verified violation</span></div>
+                  <span className="font-semibold text-slate-900">{analysis?.summary?.failed ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-500"></div><span className="text-slate-700">Requires review</span></div>
+                  <span className="font-semibold text-slate-900">{analysis?.summary?.requiresReview ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-100 pt-1 mt-0.5">
+                  <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-slate-400"></div><span className="text-slate-600">Not yet verifiable</span></div>
+                  <span className="font-semibold text-slate-900">{analysis?.summary?.unverifiable ?? 0}</span>
+                </div>
+              </div>
+
+              <div className="text-center md:border-l border-slate-200 md:pl-6 self-stretch flex flex-col justify-center">
                 <div className="text-3xl font-extrabold text-[#12304A]">
                   {analysis?.complianceScore != null
                     ? `${analysis.complianceScore}%`
                     : "N/A"}
                 </div>
-                <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">
-                  Compliance Score
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-0.5 whitespace-nowrap">
+                  Verified Compliance
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center gap-2">
+              <div className="flex flex-col items-center gap-2 md:border-l border-slate-200 md:pl-6 self-stretch justify-center">
                 <Button
                   variant="primary"
                   onClick={handleGenerateReport}
@@ -502,161 +520,105 @@ export default function InspectionDetailPage({
                 </CardBody>
               </Card>
 
-              {/* Extracted Declarations Table */}
+              
+              {/* Evidence-Driven Declarations Evaluation */}
               <Card>
                 <CardHeader
-                  title="Extracted Mandatory Declarations (Rule 6)"
-                  description={
-                    extraction?.engine === "gemini-vision"
-                      ? `Verified by ${extraction.model} vision extraction with Zod validation`
-                      : extraction?.degraded
-                        ? `DEGRADED: ${extraction.reason ?? "vision extraction unavailable"} — values are OCR-regex estimates, not verified`
-                        : "Structured parameters validated against the declaration schema"
-                  }
+                  title="Evidence-Driven Statutory Compliance Checks"
+                  description="Automated rule engine evaluation grounded in verifiable visual evidence."
                 />
-                <div className="divide-y divide-slate-100 text-xs">
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Generic Commodity Name
-                      </div>
-                      <div className="text-slate-500">
-                        {analysis?.declarations?.generic_name?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-slate-100 rounded text-slate-700">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.generic_name?.confidence ??
-                          0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
+                <CardBody className="space-y-4">
+                  {(() => {
+                    const allChecks = [
+                      ...(analysis?.violations || []),
+                      ...(analysis?.passedChecks || []),
+                      ...(analysis?.reviewChecks || []),
+                      ...(analysis?.unverifiableChecks || [])
+                    ].filter(c => !c.ruleId.includes("PLACEMENT") && !c.ruleId.includes("READABILITY") && !c.ruleId.includes("FONT"));
 
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Net Quantity (Rule 6(1)(c))
-                      </div>
-                      <div className="text-slate-500 font-medium text-emerald-700">
-                        {analysis?.declarations?.net_quantity?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.net_quantity?.confidence ??
-                          0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
+                    if (allChecks.length === 0) return <div className="text-sm text-slate-500 p-4">No evaluations available.</div>;
 
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Maximum Retail Price (Rule 6(1)(e))
-                      </div>
-                      <div className="text-slate-500 font-medium text-emerald-700">
-                        {analysis?.declarations?.mrp?.value ?? "Not detected"}
+                    return allChecks.map((check: any, idx: number) => {
+                      let bgColor = "bg-slate-50";
+                      let borderColor = "border-slate-200";
+                      let icon = null;
+                      let badgeStyle = "bg-slate-200 text-slate-700";
+                      
+                      if (check.status === "COMPLIANT") {
+                        bgColor = "bg-emerald-50";
+                        borderColor = "border-emerald-200";
+                        badgeStyle = "bg-emerald-100 text-emerald-800";
+                        icon = <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-1 flex-shrink-0" />;
+                      } else if (check.status === "VIOLATION") {
+                        bgColor = "bg-red-50";
+                        borderColor = "border-red-200";
+                        badgeStyle = "bg-red-100 text-red-800";
+                        icon = <XCircle className="w-5 h-5 text-red-600 mt-1 flex-shrink-0" />;
+                      } else if (check.status === "UNVERIFIABLE") {
+                        bgColor = "bg-slate-50";
+                        borderColor = "border-slate-200";
+                        badgeStyle = "bg-slate-200 text-slate-700";
+                        icon = <div className="w-5 h-5 text-slate-500 font-bold text-center flex-shrink-0 mt-0.5">?</div>;
+                      } else {
+                        bgColor = "bg-amber-50";
+                        borderColor = "border-amber-200";
+                        badgeStyle = "bg-amber-100 text-amber-800";
+                        icon = <AlertTriangle className="w-5 h-5 text-amber-600 mt-1 flex-shrink-0" />;
+                      }
 
-                        {analysis?.declarations?.mrp?.is_inclusive_of_taxes && (
-                          <span> (Inclusive of all taxes)</span>
-                        )}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.mrp?.confidence ?? 0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
+                      return (
+                        <div key={idx} className={`p-4 rounded-xl border ${bgColor} ${borderColor} flex flex-col md:flex-row gap-4`}>
+                           {icon}
+                           <div className="flex-1 space-y-2">
+                             <div className="flex items-start justify-between">
+                               <div>
+                                 <div className="font-bold text-slate-800 tracking-tight text-sm uppercase flex items-center gap-2">
+                                   {check.title}
+                                   {check.status === "VIOLATION" && check.severity && (
+                                     <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded-full ${
+                                       check.severity === "CRITICAL" ? "bg-red-600 text-white" : "bg-orange-500 text-white"
+                                     }`}>
+                                       {check.severity} SEVERITY
+                                     </span>
+                                   )}
+                                 </div>
+                                 <div className="text-[10px] text-slate-500 font-medium">{check.ruleNumber}</div>
+                               </div>
+                               <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase flex gap-1 ${badgeStyle}`}>
+                                 {check.status === "VIOLATION" ? `VERIFIED ${check.status}` : check.status === "COMPLIANT" ? `VERIFIED ${check.status}` : check.status}
+                               </span>
+                             </div>
 
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Date of Manufacture (Rule 6(1)(d))
-                      </div>
-                      <div className="text-slate-500">
-                        {analysis?.declarations?.date_of_manufacture?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-slate-100 rounded text-slate-700">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.date_of_manufacture
-                          ?.confidence ?? 0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
+                             {check.status === "UNVERIFIABLE" ? (
+                               <div className="text-xs text-slate-600 space-y-1">
+                                 <p>{check.reason}</p>
+                                 <p className="text-[10px] text-slate-400 mt-1">Please recapture evidence or verify manually.</p>
+                               </div>
+                             ) : (
+                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs mt-2">
+                                 <div className="space-y-1 bg-white p-2.5 rounded border border-white shadow-sm">
+                                   <div className="text-[10px] uppercase font-bold text-slate-400">Observed Value & Reason</div>
+                                   <div className="font-medium text-slate-800">{check.reason}</div>
+                                 </div>
+                                 <div className="space-y-1 bg-slate-100/50 p-2.5 rounded border border-slate-200/50">
+                                   <div className="text-[10px] uppercase font-bold text-slate-400">Supporting Evidence</div>
+                                   <div className="text-slate-600 truncate" title={check.evidence}>{check.evidence}</div>
+                                   <div className="text-[10px] text-slate-500 font-medium">Confidence: {Math.round(check.confidence * 100)}%</div>
+                                 </div>
+                               </div>
+                             )}
 
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Date of Expiry (Rule 6(1)(d))
-                      </div>
-                      <div className="text-slate-500">
-                        {analysis?.declarations?.date_of_expiry?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-slate-100 rounded text-slate-700">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.date_of_expiry?.confidence ??
-                          0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
-
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Consumer Grievance Care (Rule 6(1)(f))
-                      </div>
-                      <div className="text-slate-500">
-                        {analysis?.declarations?.consumer_care?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.consumer_care?.confidence ??
-                          0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
-
-                  <div className="p-4 flex items-center justify-between hover:bg-slate-50">
-                    <div className="space-y-0.5">
-                      <div className="font-semibold text-slate-800">
-                        Country of Origin (Rule 6(1)(g))
-                      </div>
-                      <div className="text-slate-500">
-                        {analysis?.declarations?.country_of_origin?.value ??
-                          "Not detected"}
-                      </div>
-                    </div>
-                    <span className="font-mono px-2 py-0.5 bg-slate-100 rounded text-slate-700">
-                      Conf:{" "}
-                      {Math.round(
-                        (analysis?.declarations?.country_of_origin
-                          ?.confidence ?? 0) * 100,
-                      )}
-                      %
-                    </span>
-                  </div>
-                </div>
+                             {check.suggestedAction && check.status !== "COMPLIANT" && (
+                               <div className={`text-[10px] font-medium p-2 rounded mt-2 ${check.status === 'VIOLATION' ? 'bg-red-100 text-red-900 border border-red-200' : 'bg-amber-100 text-amber-900 border border-amber-200'}`}>
+                                 <strong>Action Suggested:</strong> {check.suggestedAction}
+                               </div>
+                             )}
+                           </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </CardBody>
               </Card>
 
               {/* Task 3: Dedicated Declaration Placement Card */}
@@ -777,55 +739,6 @@ export default function InspectionDetailPage({
 
             {/* Right Column (5 cols): Statutory Violations, RAG Legal Grounding & Human Review */}
             <div className="lg:col-span-5 space-y-6">
-              {/* Statutory Violations Panel */}
-              <Card>
-                <CardHeader
-                  title="Statutory Violations & Flags"
-                  description="Deterministic findings under Packaged Commodities Rules, 2011"
-                />
-                <CardBody className="space-y-4">
-                  {analysis?.violations && analysis.violations.length > 0 ? (
-                    analysis.violations.map((v: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="p-4 bg-red-50 border border-red-200 rounded-xl space-y-2 text-xs"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-red-900">
-                            [{v.ruleNumber}] {v.title}
-                          </span>
-                          <span className="px-2 py-0.5 bg-red-200 text-red-900 font-bold rounded uppercase text-[10px]">
-                            {v.severity}
-                          </span>
-                        </div>
-                        <p className="text-red-800">{v.reason}</p>
-                        <div className="text-[11px] text-slate-600 bg-white/80 p-2 rounded border border-red-100">
-                          <strong>Evidence:</strong> {v.evidence}
-                        </div>
-                        {v.suggestedAction && (
-                          <div className="text-[11px] text-red-900 font-medium">
-                            <strong>Action:</strong> {v.suggestedAction}
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-3">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                      <div>
-                        <div className="font-bold">
-                          Zero Statutory Violations Detected
-                        </div>
-                        <div className="text-[11px] text-emerald-700 mt-0.5">
-                          All mandatory declarations under Rule 6, 7, 8, and 9
-                          were successfully extracted and validated.
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-
               {/* RAG Legal Grounding & Clause Citation */}
               <Card>
                 <CardHeader
@@ -916,7 +829,12 @@ export default function InspectionDetailPage({
                           Human Audit Decision *
                         </label>
                         <span className="text-[11px] text-slate-500">
-                          Current Audit Status: <strong className="text-slate-800">{scan?.reviewStatus || "PENDING"}</strong>
+                          System Status:{" "}
+                          <strong>
+                            {scan?.reviewStatus === "AUTO_VERIFIED" && <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded ml-1 font-bold">✓ AUTO_VERIFIED</span>}
+                            {scan?.reviewStatus === "OFFICER_REVIEW_REQUIRED" && <span className="text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded ml-1 font-bold">⚠ REVIEW_REQUIRED</span>}
+                            {scan?.reviewStatus !== "AUTO_VERIFIED" && scan?.reviewStatus !== "OFFICER_REVIEW_REQUIRED" && <span className="text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-bold">{scan?.reviewStatus || "PENDING"}</span>}
+                          </strong>
                         </span>
                       </div>
                       <div className="grid grid-cols-3 gap-2">

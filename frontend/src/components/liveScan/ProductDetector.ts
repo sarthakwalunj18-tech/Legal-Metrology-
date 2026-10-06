@@ -4,6 +4,7 @@ export interface ProductDetectionResult {
   presenceScore: number;
   framingScore: number;
   detailCount: number;
+  boundingBox?: { x: number; y: number; width: number; height: number };
 }
 
 export function detectProductAndPosition(
@@ -26,6 +27,11 @@ export function detectProductAndPosition(
   let centerSamples = 0;
   let edgeSamples = 0;
 
+  let minX = width;
+  let maxX = 0;
+  let minY = height;
+  let maxY = 0;
+
   // Step 2x2 through the frame for high speed and thorough spatial coverage
   for (let y = 1; y < height - 1; y += 2) {
     for (let x = 1; x < width - 1; x += 2) {
@@ -43,6 +49,11 @@ export function detectProductAndPosition(
       const isCenter = x >= leftMargin && x <= rightMargin && y >= topMargin && y <= bottomMargin;
 
       if (grad > 6) { // detail threshold
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+
         if (isCenter) {
           centerDetail++;
         } else {
@@ -64,8 +75,6 @@ export function detectProductAndPosition(
   const centerDetailRatio = centerSamples > 0 ? centerDetail / centerSamples : 0;
 
   // Presence score:
-  // Packaged commodities with text/graphics easily exhibit >= 3% gradient pixels.
-  // 1.5% gives a baseline score of 50. >= 4% gives 100.
   let presenceScore = Math.min(100, Math.round((detailRatio / 0.04) * 100));
 
   // Determine framing & position
@@ -73,21 +82,32 @@ export function detectProductAndPosition(
   let framingScore = 80;
 
   if (presenceScore < 15 && totalDetails < 8) {
-    // Blank wall, lens covered, or empty background
     position = "NO_PRODUCT";
     framingScore = 0;
   } else if (centerDetailRatio < 0.01 && edgeDetail > centerDetail * 4) {
-    // Product is clipping the extreme border and completely empty in the center
     position = "PARTIALLY_OUTSIDE";
     framingScore = 40;
   } else if (centerDetail < 4 && totalDetails < 12) {
-    // Tiny speck in the distance
     position = "TOO_SMALL";
     framingScore = 45;
   } else {
-    // Good central coverage - suitable for OCR
     position = "GOOD_POSITION";
     framingScore = Math.min(100, 60 + Math.round((centerDetailRatio / 0.05) * 40));
+  }
+
+  // Construct a padded bounding box if product found
+  let boundingBox;
+  if (position === "GOOD_POSITION" || position === "PARTIALLY_OUTSIDE" || position === "TOO_SMALL") {
+    // Add 10% padding
+    const padX = Math.round((maxX - minX) * 0.1);
+    const padY = Math.round((maxY - minY) * 0.1);
+
+    const bx = Math.max(0, minX - padX);
+    const by = Math.max(0, minY - padY);
+    const bw = Math.min(width - bx, (maxX - minX) + Math.round(padX * 2));
+    const bh = Math.min(height - by, (maxY - minY) + Math.round(padY * 2));
+
+    boundingBox = { x: bx, y: by, width: bw, height: bh };
   }
 
   return {
@@ -95,6 +115,7 @@ export function detectProductAndPosition(
     position,
     presenceScore,
     framingScore,
-    detailCount: totalDetails
+    detailCount: totalDetails,
+    boundingBox
   };
 }

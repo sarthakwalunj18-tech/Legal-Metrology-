@@ -35,8 +35,8 @@ export function useLiveScan() {
   const stableTicksRef = useRef(0);
 
   // Dual queue architecture
-  const extractQueueRef = useRef<File[]>([]);
-  const allSessionFilesRef = useRef<File[]>([]);
+  const extractQueueRef = useRef<{ file: File, bbox?: any }[]>([])
+  const allSessionFilesRef = useRef<{ file: File, bbox?: any }[]>([])
 
   const isUploadingRef = useRef(false);
   const isStartingRef = useRef(false);
@@ -78,7 +78,12 @@ export function useLiveScan() {
     if (isUploadingRef.current || extractQueueRef.current.length === 0) return;
 
     isUploadingRef.current = true;
-    const file = extractQueueRef.current.shift();
+    const item = extractQueueRef.current.shift();
+    if (!item) {
+      isUploadingRef.current = false;
+      return;
+    }
+    const { file, bbox } = item;
     if (!file) {
       isUploadingRef.current = false;
       return;
@@ -90,6 +95,9 @@ export function useLiveScan() {
       const token = localStorage.getItem("lm_auth_token") || "dev-inspector";
       const formData = new FormData();
       formData.append("files", file);
+      if (bbox) {
+        formData.append("cropBox", JSON.stringify(bbox));
+      }
 
       abortControllerRef.current = new AbortController();
 
@@ -117,14 +125,15 @@ export function useLiveScan() {
     }
   }, []);
 
-  const extractAndQueueFrame = useCallback(() => {
+  const extractAndQueueFrame = useCallback((boundingBox?: { x: number; y: number; width: number; height: number }, targetW = 96, targetH = 72) => {
     const video = videoRef.current;
     const captureCanvas = extractCanvasRef.current;
     if (!video || !captureCanvas) return;
 
-    const width = video.videoWidth || 1280;
-    const height = video.videoHeight || 720;
+    let width = video.videoWidth || 1280;
+    let height = video.videoHeight || 720;
 
+    // We capture the FULL frame for audit but attach crop coordinates
     captureCanvas.width = width;
     captureCanvas.height = height;
 
@@ -132,6 +141,16 @@ export function useLiveScan() {
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0, width, height);
+
+    let mappedBbox: any = null;
+    if (boundingBox) {
+      mappedBbox = {
+        x: Math.max(0, Math.floor((boundingBox.x / targetW) * width)),
+        y: Math.max(0, Math.floor((boundingBox.y / targetH) * height)),
+        width: Math.floor((boundingBox.width / targetW) * width),
+        height: Math.floor((boundingBox.height / targetH) * height)
+      };
+    }
 
     captureCanvas.toBlob(
       (blob) => {
@@ -141,8 +160,8 @@ export function useLiveScan() {
           type: "image/jpeg"
         });
 
-        extractQueueRef.current.push(file);
-        allSessionFilesRef.current.push(file);
+        extractQueueRef.current.push({ file, bbox: mappedBbox });
+        allSessionFilesRef.current.push({ file, bbox: mappedBbox });
 
         setUploadQueueCount(extractQueueRef.current.length);
         void queueBackgroundWorker();
@@ -166,9 +185,12 @@ export function useLiveScan() {
       const token = localStorage.getItem("lm_auth_token") || "dev-inspector";
       const formData = new FormData();
 
-      allSessionFilesRef.current.forEach((file) => {
-        formData.append("files", file);
+      const bboxes: any[] = [];
+      allSessionFilesRef.current.forEach((item) => {
+        formData.append("files", item.file);
+        bboxes.push(item.bbox || null);
       });
+      formData.append("bboxes", JSON.stringify(bboxes));
 
       formData.append("productName", "Live Inspection Session");
       formData.append("scanMode", "LIVE_ROLLING_V2");
@@ -273,7 +295,7 @@ export function useLiveScan() {
         setViewsCaptured(currentCount);
         setStatus("CAPTURED");
 
-        extractAndQueueFrame();
+        extractAndQueueFrame(evaluation.boundingBox, targetW, targetH);
 
         stableTicksRef.current = 0;
         // Cooldown: 4 ticks @ 180ms ≈ 720ms

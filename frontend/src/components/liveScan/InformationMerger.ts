@@ -33,16 +33,17 @@ export function mergeExtraction(
   const docs = incoming.declarations;
 
   const nextState = { ...currentState };
-  
+
   for (const key of Object.keys(nextState) as (keyof ProductInformationState)[]) {
     const incField = docs[key];
     const curField = nextState[key];
-    
+
+    // If an incoming field has a value, and its confidence is higher (or the current is empty), accept it
     if (incField?.value) {
       if (!curField.value || incField.confidence > curField.confidence) {
         nextState[key] = {
           value: incField.value,
-          confidence: incField.confidence || 0
+          confidence: incField.confidence || 0.9
         };
       }
     }
@@ -54,14 +55,14 @@ export function mergeExtraction(
 export function calculateCoverage(state: ProductInformationState): { percent: number; missing: string[]; found: string[] } {
   const fields = [
     { key: "generic_name", label: "Product Name" },
-    { key: "manufacturer", label: "Manufacturer/Packer" },
+    { key: "manufacturer", label: "Manufacturer" },
     { key: "net_quantity", label: "Net Quantity" },
     { key: "mrp", label: "MRP" },
-    { key: "date_of_manufacture", label: "Manufacturing Date" },
-    { key: "date_of_expiry", label: "Expiry / Best Before" },
+    { key: "date_of_manufacture", label: "Mfg Date" },
+    { key: "date_of_expiry", label: "Expiry" },
     { key: "consumer_care", label: "Consumer Care" }
   ];
-  
+
   let count = 0;
   const missing: string[] = [];
   const found: string[] = [];
