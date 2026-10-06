@@ -1,6 +1,6 @@
 export interface ProductDetectionResult {
   detected: boolean;
-  position: "GOOD_POSITION" | "NO_PRODUCT" | "PARTIALLY_OUTSIDE" | "TOO_SMALL";
+  position: "GOOD_POSITION" | "NO_PRODUCT" | "PARTIALLY_OUTSIDE" | "TOO_SMALL" | "HUMAN_FACE_REJECTED";
   presenceScore: number;
   framingScore: number;
   detailCount: number;
@@ -27,6 +27,8 @@ export function detectProductAndPosition(
   let centerSamples = 0;
   let edgeSamples = 0;
 
+  let skinPixels = 0;
+
   let minX = width;
   let maxX = 0;
   let minY = height;
@@ -39,16 +41,32 @@ export function detectProductAndPosition(
       const rightIdx = idx + 4;
       const downIdx = idx + width * 4;
 
-      const g = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      const luma = r * 0.299 + g * 0.587 + b * 0.114;
       const gr = data[rightIdx] * 0.299 + data[rightIdx + 1] * 0.587 + data[rightIdx + 2] * 0.114;
       const gd = data[downIdx] * 0.299 + data[downIdx + 1] * 0.587 + data[downIdx + 2] * 0.114;
 
       // Combined 2D gradient magnitude
-      const grad = Math.abs(g - gr) + Math.abs(g - gd);
+      const grad = Math.abs(luma - gr) + Math.abs(luma - gd);
 
       const isCenter = x >= leftMargin && x <= rightMargin && y >= topMargin && y <= bottomMargin;
 
-      if (grad > 6) { // detail threshold
+      // Basic skin tone heuristic to prevent capturing faces instead of products
+      if (
+        r > 95 && g > 40 && b > 20 &&
+        r > g && r > b &&
+        Math.abs(r - g) > 15 &&
+        Math.max(r, g, b) - Math.min(r, g, b) > 15
+      ) {
+        skinPixels++;
+      }
+
+      // Check for sharp edges (text, barcodes, product outlines)
+      // Increasing the threshold slightly to ignore soft gradients (like faces/clothes)
+      if (grad > 8) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -73,26 +91,32 @@ export function detectProductAndPosition(
   const totalSamples = centerSamples + edgeSamples;
   const detailRatio = totalSamples > 0 ? totalDetails / totalSamples : 0;
   const centerDetailRatio = centerSamples > 0 ? centerDetail / centerSamples : 0;
+  const skinRatio = totalSamples > 0 ? skinPixels / totalSamples : 0;
 
-  // Presence score:
-  let presenceScore = Math.min(100, Math.round((detailRatio / 0.04) * 100));
+  // Presence score based heavily on sharp structural detail (text, edges)
+  let presenceScore = Math.min(100, Math.round((detailRatio / 0.05) * 100));
 
   // Determine framing & position
-  let position: "GOOD_POSITION" | "NO_PRODUCT" | "PARTIALLY_OUTSIDE" | "TOO_SMALL" = "GOOD_POSITION";
+  let position: ProductDetectionResult["position"] = "GOOD_POSITION";
   let framingScore = 80;
 
-  if (presenceScore < 15 && totalDetails < 8) {
+  if (skinRatio > 0.15 && presenceScore < 40) {
+    // If significantly skin-colored and lacks extremely dense product-like geometry, it's a person/face.
+    position = "HUMAN_FACE_REJECTED";
+    framingScore = 0;
+    presenceScore = 0; // Force rejection
+  } else if (presenceScore < 15 && totalDetails < 10) {
     position = "NO_PRODUCT";
     framingScore = 0;
-  } else if (centerDetailRatio < 0.01 && edgeDetail > centerDetail * 4) {
+  } else if (centerDetailRatio < 0.015 && edgeDetail > centerDetail * 3) {
     position = "PARTIALLY_OUTSIDE";
     framingScore = 40;
-  } else if (centerDetail < 4 && totalDetails < 12) {
+  } else if (centerDetail < 6 && totalDetails < 15) {
     position = "TOO_SMALL";
     framingScore = 45;
   } else {
     position = "GOOD_POSITION";
-    framingScore = Math.min(100, 60 + Math.round((centerDetailRatio / 0.05) * 40));
+    framingScore = Math.min(100, 60 + Math.round((centerDetailRatio / 0.06) * 40));
   }
 
   // Construct a padded bounding box if product found
@@ -111,7 +135,7 @@ export function detectProductAndPosition(
   }
 
   return {
-    detected: presenceScore >= 18,
+    detected: presenceScore >= 20 && position !== "HUMAN_FACE_REJECTED",
     position,
     presenceScore,
     framingScore,

@@ -54,9 +54,11 @@ export default function InspectionDetailPage({
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isGeneratingDocxReport, setIsGeneratingDocxReport] = useState(false);
 
-  const loadInspection = async () => {
-    setLoading(true);
-    setError(null);
+  const loadInspection = async (silentMode = false) => {
+    if (!silentMode) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const [scanRes, auditRes] = await Promise.all([
@@ -84,15 +86,40 @@ export default function InspectionDetailPage({
       if (auditJson.success && auditJson.data?.auditHistory) {
         setAuditHistory(auditJson.data.auditHistory);
       }
+
+      return scanJson.data.scan;
     } catch (err: any) {
       setError(err.message || "Failed to load inspection details");
+      return null;
     } finally {
-      setLoading(false);
+      if (!silentMode) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadInspection();
+    let pollingTimeout: NodeJS.Timeout | null = null;
+    let isMounted = true;
+
+    const doFetch = async () => {
+      const currentScan = await loadInspection(!pollingTimeout ? false : true);
+
+      if (!isMounted) return;
+
+      if (currentScan && (currentScan.status === "PROCESSING" || currentScan.status === "PENDING" || !currentScan.status)) {
+        pollingTimeout = setTimeout(doFetch, 2000);
+      } else {
+        if (pollingTimeout) clearTimeout(pollingTimeout);
+      }
+    };
+
+    doFetch();
+
+    return () => {
+      isMounted = false;
+      if (pollingTimeout) clearTimeout(pollingTimeout);
+    };
   }, [id]);
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
@@ -251,16 +278,55 @@ export default function InspectionDetailPage({
     [declarations],
   );
 
-  if (loading) {
+  const scanDataRef = React.useRef(scanData);
+  React.useEffect(() => {
+    scanDataRef.current = scanData;
+  }, [scanData]);
+
+  if (loading && !scanData) {
     return (
       <div className="flex min-h-screen bg-[#F8FAFC]">
         <Sidebar />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-3">
-            <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="text-xs text-slate-500 font-medium">
               Loading statutory inspection records...
             </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (scanData?.scan && (scanData.scan.status === "PROCESSING" || scanData.scan.status === "PENDING" || !scanData.scan.status)) {
+    return (
+      <div className="flex min-h-screen bg-[#F8FAFC]">
+        <Sidebar />
+        <div className="flex-1 flex flex-col items-center justify-center bg-white">
+          <div className="max-w-md w-full p-8 text-center space-y-6">
+            <div className="relative w-16 h-16 mx-auto mb-4">
+              <div className="absolute inset-0 border-4 border-slate-100 rounded-full" />
+              <div className="absolute inset-0 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <Package className="absolute inset-0 m-auto text-indigo-500 w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-indigo-700">
+                Analyzing package evidence...
+              </h2>
+              <p className="text-sm text-slate-500 mt-2">
+                Running vision extraction and Legal Metrology compliance rules. This process assesses MRP, net quantity, dates, fonts, and readability.
+              </p>
+            </div>
+
+            <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+               <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2.5 rounded-full transition-all duration-1000 w-[70%] animate-pulse" />
+            </div>
+
+            <div className="flex justify-between text-xs font-semibold text-slate-400">
+              <span className="text-indigo-600">Validating rules...</span>
+              <span>Please wait</span>
+            </div>
           </div>
         </div>
       </div>

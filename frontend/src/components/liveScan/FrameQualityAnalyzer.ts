@@ -14,7 +14,8 @@ export interface FrameQualityResult {
     | "MOVING"
     | "NO_PRODUCT"
     | "PARTIALLY_OUTSIDE"
-    | "TOO_SMALL";
+    | "TOO_SMALL"
+    | "HUMAN_FACE_REJECTED";
   qualityScore: number;
   boundingBox?: { x: number; y: number; width: number; height: number };
   metrics: {
@@ -67,7 +68,9 @@ export function evaluateFrame(
   // Diagnostic status determination with clear priority
   let status: FrameQualityResult["status"] = "GOOD_POSITION";
 
-  if (!product.detected || product.presenceScore < 18) {
+  if (product.position === "HUMAN_FACE_REJECTED") {
+    status = "HUMAN_FACE_REJECTED";
+  } else if (!product.detected || product.presenceScore < 18) {
     status = "NO_PRODUCT";
   } else if (brightness.status === "TOO_DARK") {
     status = "TOO_DARK";

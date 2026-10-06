@@ -17,11 +17,18 @@ export type LiveScanStatus =
   | "MOVING"
   | "PARTIALLY_OUTSIDE"
   | "TOO_SMALL"
+  | "HUMAN_FACE_REJECTED"
   | "DUPLICATE"
   | "CAPTURING"
   | "CAPTURED"
   | "PROCESSING"
   | "ERROR";
+
+// Configurable Constants for Camera Optimization
+const FRAME_ANALYSIS_INTERVAL_MS = 250;
+const CAPTURE_COOLDOWN_MS = 800; // Time user has to rotate product
+const MAX_CAPTURED_IMAGES = 6;
+const STATUS_DEBOUNCE_MS = 400;
 
 export function useLiveScan() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -45,7 +52,31 @@ export function useLiveScan() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const [cameraOn, setCameraOn] = useState(false);
+  const [internalStatus, setInternalStatus] = useState<LiveScanStatus>("READY");
   const [status, setStatus] = useState<LiveScanStatus>("READY");
+  const statusRef = useRef<LiveScanStatus>("READY");
+  const debouncedStatusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const updateStatus = useCallback((newInternalStatus: LiveScanStatus, force = false) => {
+    setInternalStatus(newInternalStatus);
+
+    // Some statuses should be immediate (e.g. CAPTURED, ERROR, READY)
+    const immediateStatuses = ["CAPTURED", "ERROR", "READY", "PROCESSING", "SEARCHING_PRODUCT", "HOLD_STEADY", "DUPLICATE"];
+
+    if (force || immediateStatuses.includes(newInternalStatus)) {
+      if (debouncedStatusTimeoutRef.current) clearTimeout(debouncedStatusTimeoutRef.current);
+      statusRef.current = newInternalStatus;
+      setStatus(newInternalStatus);
+    } else {
+      // Debounce flickering statuses (e.g. TOO_BLURRY, MOVING, TOO_DARK)
+      if (statusRef.current === newInternalStatus) return; // Already current
+      if (debouncedStatusTimeoutRef.current) clearTimeout(debouncedStatusTimeoutRef.current);
+      debouncedStatusTimeoutRef.current = setTimeout(() => {
+        statusRef.current = newInternalStatus;
+        setStatus(newInternalStatus);
+      }, STATUS_DEBOUNCE_MS);
+    }
+  }, []);
   const [viewsCaptured, setViewsCaptured] = useState(0);
   const [totalProcessed, setTotalProcessed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -70,10 +101,10 @@ export function useLiveScan() {
       abortControllerRef.current.abort();
     }
     setCameraOn(false);
-    setStatus("READY");
+    updateStatus("READY", true);
     stableTicksRef.current = 0;
     captureCooldownRef.current = 0;
-  }, []);
+  }, [updateStatus]);
 
   const queueBackgroundWorker = useCallback(async () => {
     if (isUploadingRef.current || extractQueueRef.current.length === 0) return;
@@ -179,7 +210,7 @@ export function useLiveScan() {
     }
 
     setIsFinishing(true);
-    setStatus("PROCESSING");
+    updateStatus("PROCESSING", true);
     stopCamera();
 
     try {
@@ -205,10 +236,11 @@ export function useLiveScan() {
       if (!uploadRes.ok) throw new Error("Consolidated session upload failed");
       const { data } = await uploadRes.json();
 
-      await fetch(`${API_BASE_URL}/api/inspections/${data.scanId}/analyze`, {
+      // Trigger analysis asynchronously (fire and forget) to ensure instant navigation
+      fetch(`${API_BASE_URL}/api/inspections/${data.scanId}/analyze`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
-      });
+      }).catch(err => console.error("Async analysis trigger failed:", err));
 
       return data.scanId;
     } catch (e: any) {
@@ -218,7 +250,7 @@ export function useLiveScan() {
     } finally {
       setIsFinishing(false);
     }
-  }, [isFinishing, stopCamera]);
+  }, [isFinishing, stopCamera, updateStatus]);
 
   const startAnalysisLoop = useCallback(() => {
     if (loopRef.current !== null) return;
@@ -226,13 +258,17 @@ export function useLiveScan() {
     captureCooldownRef.current = 0;
     stableTicksRef.current = 0;
 
-    // Run evaluation tick every 180ms
+    // Run evaluation tick at defined interval
     loopRef.current = window.setInterval(() => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
+      // Check max limit
+      if (detectorRef.current.getCount() >= MAX_CAPTURED_IMAGES) return;
+
       // Handle capture cooldown (allow user time to rotate product)
+      const ticksToWait = Math.ceil(CAPTURE_COOLDOWN_MS / FRAME_ANALYSIS_INTERVAL_MS);
       if (captureCooldownRef.current > 0) {
         captureCooldownRef.current--;
         return;
@@ -263,7 +299,7 @@ export function useLiveScan() {
         // If frame is unacceptable (empty, moving, blurry, dark, etc.)
         if (!evaluation.isAcceptable) {
           stableTicksRef.current = 0;
-          setStatus(
+          updateStatus(
             evaluation.status === "NO_PRODUCT"
               ? "SEARCHING_PRODUCT"
               : evaluation.status
@@ -272,11 +308,11 @@ export function useLiveScan() {
         }
 
         // Frame passed individual gates & composite score.
-        // Require 2 consecutive stable ticks (~360ms temporal stability window)
+        // Require 2 consecutive stable ticks (~360 - 500ms temporal stability window)
         // to prevent capturing motion blur mid-swivel.
         if (stableTicksRef.current < 1) {
           stableTicksRef.current++;
-          setStatus("HOLD_STEADY");
+          updateStatus("HOLD_STEADY");
           return;
         }
 
@@ -285,7 +321,7 @@ export function useLiveScan() {
         const isDuplicate = detectorRef.current.checkDuplicate(signature);
 
         if (isDuplicate) {
-          setStatus("DUPLICATE");
+          updateStatus("DUPLICATE", true);
           stableTicksRef.current = 0;
           return;
         }
@@ -294,18 +330,17 @@ export function useLiveScan() {
         detectorRef.current.addSignature(signature);
         const currentCount = detectorRef.current.getCount();
         setViewsCaptured(currentCount);
-        setStatus("CAPTURED");
+        updateStatus("CAPTURED", true);
 
         extractAndQueueFrame(evaluation.boundingBox, targetW, targetH);
 
         stableTicksRef.current = 0;
-        // Cooldown: 4 ticks @ 180ms ≈ 720ms
-        captureCooldownRef.current = 4;
+        captureCooldownRef.current = ticksToWait;
       } catch (err) {
         console.error("Frame evaluation error:", err);
       }
-    }, 180);
-  }, [extractAndQueueFrame]);
+    }, FRAME_ANALYSIS_INTERVAL_MS);
+  }, [extractAndQueueFrame, updateStatus]);
 
   const startCamera = async () => {
     if (isStartingRef.current || cameraOn) return;
@@ -358,7 +393,7 @@ export function useLiveScan() {
       }
 
       setCameraOn(true);
-      setStatus("SEARCHING_PRODUCT");
+      updateStatus("SEARCHING_PRODUCT", true);
       setViewsCaptured(0);
       setTotalProcessed(0);
       setUploadQueueCount(0);
@@ -372,7 +407,7 @@ export function useLiveScan() {
       startAnalysisLoop();
     } catch (e: any) {
       setError(e.message || "Failed to start camera");
-      setStatus("ERROR");
+      updateStatus("ERROR", true);
       setCameraOn(false);
     } finally {
       isStartingRef.current = false;
@@ -384,6 +419,9 @@ export function useLiveScan() {
     return () => {
       mountedRef.current = false;
       stopCamera();
+      if (debouncedStatusTimeoutRef.current) {
+        clearTimeout(debouncedStatusTimeoutRef.current);
+      }
     };
   }, [stopCamera]);
 

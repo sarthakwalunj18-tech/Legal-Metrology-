@@ -67,6 +67,8 @@ export default function LiveInspectionPage() {
         return "Image blurry — hold steady";
       case "MOVING":
         return "Product moving — hold steady";
+      case "HUMAN_FACE_REJECTED":
+        return "Human detected — show product";
       case "PARTIALLY_OUTSIDE":
         return "Move product slightly away";
       case "TOO_SMALL":
