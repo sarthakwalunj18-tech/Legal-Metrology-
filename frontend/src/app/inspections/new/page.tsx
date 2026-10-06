@@ -8,6 +8,7 @@ import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import {
   Upload,
+  Camera,
   ScanSearch,
   CheckCircle2,
   AlertCircle,
@@ -277,15 +278,26 @@ export default function NewInspectionPage() {
                 {/* Package Images Upload */}
                 <Card>
                   <CardHeader
-                    title="1. Packaging Image Upload"
-                    description="Clear photos of Principal Display Panel (PDP) and sides"
+                    title="1. Packaging Image Upload & Acquisition"
+                    description="Clear photos of Principal Display Panel (PDP) and sides (Browse files or capture via device camera)"
                   />
                   <CardBody className="space-y-4">
+                    {/* File Picker input for desktop & photo library */}
                     <input
                       id="package-images"
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/jpg"
                       multiple
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+
+                    {/* Direct Camera Capture input for mobile & tablet browsers */}
+                    <input
+                      id="camera-capture"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/jpg"
+                      capture="environment"
                       onChange={handleFileChange}
                       className="hidden"
                     />
@@ -319,14 +331,24 @@ export default function NewInspectionPage() {
                           ))}
                         </div>
 
-                        <div className="flex items-center justify-between pt-2">
-                          <label
-                            htmlFor="package-images"
-                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
-                          >
-                            <Upload className="w-3.5 h-3.5 text-blue-600" />
-                            Add More Images
-                          </label>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                          <div className="flex items-center gap-2">
+                            <label
+                              htmlFor="package-images"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                            >
+                              <Upload className="w-3.5 h-3.5 text-blue-600" />
+                              Browse Files
+                            </label>
+
+                            <label
+                              htmlFor="camera-capture"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs"
+                            >
+                              <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                              Take Photo
+                            </label>
+                          </div>
 
                           <span className="text-xs text-slate-500 font-medium">
                             {selectedFiles.length} package image{selectedFiles.length !== 1 ? "s" : ""} selected
@@ -334,27 +356,45 @@ export default function NewInspectionPage() {
                         </div>
                       </div>
                     ) : (
-                      <label
-                        htmlFor="package-images"
-                        className="border-2 border-dashed border-slate-300 hover:border-blue-400 rounded-xl p-8 text-center transition-colors bg-slate-50/50 flex flex-col items-center justify-center cursor-pointer min-h-[240px]"
-                      >
-                        <div className="w-12 h-12 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center mb-3">
-                          <Upload className="w-6 h-6" />
+                      <div className="border-2 border-dashed border-slate-300 hover:border-blue-400 rounded-xl p-6 sm:p-8 text-center transition-colors bg-slate-50/50 flex flex-col items-center justify-center min-h-[240px]">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-12 h-12 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center">
+                            <Upload className="w-6 h-6" />
+                          </div>
+                          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <Camera className="w-6 h-6" />
+                          </div>
                         </div>
+
                         <h4 className="text-sm font-semibold text-slate-800">
-                          Upload Package Image(s)
+                          Upload or Capture Package Images
                         </h4>
                         <p className="text-xs text-slate-500 mt-1 max-w-xs">
-                          Drag & drop package photos or browse local files. Select multiple angles (Front, Back, Side panel).
+                          Select multiple angles (Front, Back, Side panel) from your local device or take photos directly with your camera.
                         </p>
-                        <span className="mt-3 px-3 py-1 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-700 shadow-2xs">
-                          Browse Files
-                        </span>
-                      </label>
+
+                        <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                          <label
+                            htmlFor="package-images"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs transition-colors"
+                          >
+                            <Upload className="w-4 h-4 text-blue-600" />
+                            Browse Files
+                          </label>
+
+                          <label
+                            htmlFor="camera-capture"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 cursor-pointer shadow-2xs transition-colors"
+                          >
+                            <Camera className="w-4 h-4 text-white" />
+                            Take Photo
+                          </label>
+                        </div>
+                      </div>
                     )}
 
                     <div className="text-[11px] text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      ✓ Multiple images will be processed under <strong>ONE scan record</strong>.
+                      ✓ Multiple images and live camera captures are merged into <strong>ONE inspection record</strong>.
                       <br />✓ EXIF orientation normalized & CLAHE contrast boost applied automatically.
                     </div>
                   </CardBody>
