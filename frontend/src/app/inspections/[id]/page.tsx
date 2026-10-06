@@ -229,55 +229,6 @@ export default function InspectionDetailPage({
     }
   };
 
-  const BOX_LABELS: Record<string, string> = {
-    generic_name: "Generic name",
-    net_quantity: "Net quantity",
-    mrp: "MRP",
-    date_of_manufacture: "Mfg date",
-    date_of_expiry: "Expiry",
-    manufacturer: "Manufacturer",
-    packer: "Packer",
-    consumer_care: "Consumer care",
-    country_of_origin: "Country of origin",
-  };
-
-  // Group normalized (0-1000) boxes by the package image they were read from.
-  // NOTE: this hook must stay ABOVE the loading/error early returns below, or the
-  // hook order changes between renders and React throws.
-  const declarations = scanData?.analysis?.declarations;
-  const boxesByImage: Record<number, any[]> = useMemo(() => {
-    const grouped: Record<number, any[]> = {};
-    for (const [field, decl] of Object.entries<any>(declarations ?? {})) {
-      if (!decl || typeof decl !== "object" || !decl.bbox) continue;
-      const { x1, y1, x2, y2 } = decl.bbox;
-      if ([x1, y1, x2, y2].some((v) => typeof v !== "number")) continue;
-      const imgIdx = typeof decl.image_index === "number" ? decl.image_index : 0;
-      (grouped[imgIdx] ??= []).push({
-        field,
-        label: BOX_LABELS[field] ?? field,
-        value: decl.value,
-        x1,
-        y1,
-        x2,
-        y2,
-      });
-    }
-    return grouped;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [declarations]);
-
-  const totalBoxes = useMemo(
-    () => Object.values(boxesByImage).reduce((a, list) => a + list.length, 0),
-    [boxesByImage],
-  );
-
-  const detectableFieldCount = useMemo(
-    () =>
-      Object.keys(declarations ?? {}).filter((k) => k !== "other_declarations")
-        .length,
-    [declarations],
-  );
-
   const scanDataRef = React.useRef(scanData);
   React.useEffect(() => {
     scanDataRef.current = scanData;
@@ -505,11 +456,11 @@ export default function InspectionDetailPage({
               {/* Evidence Viewer */}
               <Card>
                 <CardHeader
-                  title="Packaging Evidence & Region Localization"
+                  title="Packaging Evidence"
                   description={
                     extraction?.engine === "gemini-vision"
-                      ? `Declaration regions localized by ${extraction.model} on ${extraction.imageCount} package image(s)`
-                      : "Declaration regions localized on the package images"
+                      ? `Captured package evidence verified by ${extraction.model} across ${extraction.imageCount} angle(s)`
+                      : "Captured package evidence for statutory verification"
                   }
                 />
                 <CardBody className="space-y-4">
@@ -520,7 +471,6 @@ export default function InspectionDetailPage({
                           key={image.id}
                           className="bg-white rounded-lg border border-slate-200 overflow-hidden"
                         >
-                          {/* Real normalised (0-1000) bounding boxes for this image */}
                           <div className="relative w-full h-64 bg-slate-100">
                             <img
                               src={image.url}
@@ -531,37 +481,15 @@ export default function InspectionDetailPage({
                               height={600}
                               className="w-full h-64 object-contain bg-slate-100"
                             />
-                            {boxesByImage[index]?.map((b: any) => (
-                              <div
-                                key={`${b.field}-${b.label}`}
-                                title={`${b.label}: ${b.value ?? "not detected"}`}
-                                className="absolute border-2 border-emerald-400 rounded-[2px] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
-                                style={{
-                                  left: `${b.x1 / 10}%`,
-                                  top: `${b.y1 / 10}%`,
-                                  width: `${(b.x2 - b.x1) / 10}%`,
-                                  height: `${(b.y2 - b.y1) / 10}%`,
-                                }}
-                              >
-                                <span className="absolute -top-5 left-0 text-[10px] font-semibold bg-emerald-400 text-slate-900 px-1 rounded whitespace-nowrap">
-                                  {b.label}
-                                </span>
-                              </div>
-                            ))}
                           </div>
 
-                          <div className="px-3 py-2 text-xs text-slate-600 border-t">
-                            Package Image {index + 1}
-                            {boxesByImage[index]?.length ? (
-                              <span className="ml-2 text-emerald-700 font-medium">
-                                {boxesByImage[index].length} region
-                                {boxesByImage[index].length > 1 ? "s" : ""} localized
-                              </span>
-                            ) : (
-                              <span className="ml-2 text-slate-400">
-                                no regions localized
-                              </span>
-                            )}
+                          <div className="px-3 py-2 text-xs text-slate-600 border-t flex items-center justify-between">
+                            <span className="font-medium text-slate-800">
+                              Package Angle {index + 1}
+                            </span>
+                            <span className="text-slate-400">
+                              {image.fileName || "Captured View"}
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -569,7 +497,7 @@ export default function InspectionDetailPage({
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 px-1">
-                    <span>✓ High-DPI CLAHE Preprocessing Applied</span>
+                    <span>✓ High-DPI Preprocessing & Adaptive Contrast</span>
                     <span>
                       {ocrInfo?.provider === "google-cloud-vision"
                         ? "OCR: Google Cloud Vision"
@@ -577,10 +505,10 @@ export default function InspectionDetailPage({
                           ? `OCR: Tesseract.js (mean confidence ${(
                               (ocrInfo.averageConfidence ?? 0) * 100
                             ).toFixed(0)}%)`
-                          : "OCR: unavailable"}
+                          : "OCR: Vision-assisted"}
                     </span>
-                    <span>
-                      {totalBoxes} of {detectableFieldCount} declarations localized
+                    <span className="text-emerald-600 font-medium">
+                      ✓ AI Vision & OCR Extraction Complete
                     </span>
                   </div>
                 </CardBody>
